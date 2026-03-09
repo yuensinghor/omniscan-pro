@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package wifi_config;
+
+enum WiFiConfigMsgType {
+    TypeCmdGetStatus = 0;
+    TypeRespGetStatus = 1;
+    TypeCmdSetConfig = 2;
+    TypeRespSetConfig = 3;
+    TypeCmdApplyConfig = 4;
+    TypeRespApplyConfig = 5;
+}
+
+message CmdGetStatus {}
+
+message RespGetStatus {
+    WifiStationState sta_state = 1;
+    oneof state {
+        WifiConnectFailedReason fail_reason = 2;
+        WifiConnectedState connected = 3;
+    }
+}
+
+enum WifiStationState {
+    Connected = 0;
+    Connecting = 1;
+    Disconnected = 2;
+    ConnectionFailed = 3;
+}
+
+enum WifiConnectFailedReason {
+    AuthError = 0;
+    NetworkNotFound = 1;
+}
+
+message WifiConnectedState {
+    string ip4_addr = 1;
+    bytes bssid = 2;
+    string ssid = 3;
+}
+
+message CmdSetConfig {
+    bytes ssid = 1;
+    bytes passphrase = 2;
+    bytes bssid = 3;
+}
+
+message RespSetConfig {
+    Status status = 1;
+}
+
+message CmdApplyConfig {}
+
+message RespApplyConfig {
+    Status status = 1;
+}
+
+enum Status {
+    Success = 0;
+    InvalidSecScheme = 1;
+    InvalidProto = 2;
+    TooManySessions = 3;
+    InvalidArgument = 4;
+    InternalError = 5;
+    CryptoError = 6;
+    InvalidSession = 7;
+}
+
+message WiFiConfigPayload {
+    WiFiConfigMsgType msg = 1;
+    oneof payload {
+        CmdGetStatus cmd_get_status = 10;
+        RespGetStatus resp_get_status = 11;
+        CmdSetConfig cmd_set_config = 12;
+        RespSetConfig resp_set_config = 13;
+        CmdApplyConfig cmd_apply_config = 14;
+        RespApplyConfig resp_apply_config = 15;
+    }
+}

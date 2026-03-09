@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package session;
+
+enum SecSchemeVersion {
+    SecScheme0 = 0;
+    SecScheme1 = 1;
+}
+
+message SessionData {
+    SecSchemeVersion sec_ver = 2;
+    oneof proto {
+        Sec0Payload sec0 = 10;
+        Sec1Payload sec1 = 11;
+    }
+}
+
+message Sec0Payload {
+    bytes msg = 1;
+    PayloadDescriptor sr = 2;
+    PayloadDescriptor sc = 3;
+}
+
+message Sec1Payload {
+    bytes msg = 1;
+    PayloadDescriptor sr = 2;
+    PayloadDescriptor sc = 3;
+}
+
+message PayloadDescriptor {
+    uint32 type = 1;
+    uint32 from = 2;
+    uint32 to = 3;
+}
+
+// Security 1 Payload Messages
+message SessionCmd0 {
+    bytes client_pub_key = 1;
+}
+
+message SessionResp0 {
+    Status status = 1;
+    bytes device_pub_key = 2;
+    bytes device_random = 3;
+}
+
+message SessionCmd1 {
+    bytes client_verify_data = 1;
+}
+
+message SessionResp1 {
+    Status status = 1;
+    bytes device_verify_data = 2;
+}
+
+enum Status {
+    Success = 0;
+    InvalidSecScheme = 1;
+    InvalidProto = 2;
+    TooManySessions = 3;
+    InvalidArgument = 4;
+    InternalError = 5;
+    CryptoError = 6;
+    InvalidSession = 7;
+}

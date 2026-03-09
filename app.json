@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "OmniScan Pro",
+    "slug": "omniscan-pro",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.omniscanpro.app",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "OmniScan Pro uses Bluetooth to connect to and provision ESP32 barcode scanners.",
+        "NSBluetoothPeripheralUsageDescription": "OmniScan Pro uses Bluetooth to connect to and provision ESP32 barcode scanners.",
+        "NSCameraUsageDescription": "OmniScan Pro uses the camera to scan barcodes and capture product photos.",
+        "UIBackgroundModes": ["bluetooth-central"]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.omniscanpro.app",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.CAMERA"
+      ]
+    },
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["central"],
+          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to Bluetooth devices"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "OmniScan Pro uses the camera to scan barcodes and capture product photos."
+        }
+      ],
+      "expo-dev-client"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7952cf59-3513-40ab-88f4-8470aab2fa2e"
+      }
+    }
+  }
+}
