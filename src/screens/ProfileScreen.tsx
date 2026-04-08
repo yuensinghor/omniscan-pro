@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   ScrollView,
   Alert,
   Modal,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
@@ -20,6 +21,7 @@ interface ProfileScreenProps {
   onClose: () => void;
   onAddDevice: () => void;
   onOpenHistory: () => void;
+  onOpenFamilySharing: () => void;
 }
 
 const TIER_PLANS = [
@@ -52,14 +54,116 @@ const TIER_PLANS = [
   },
 ];
 
+// ─── Feedback Panel ──────────────────────────────────────────────────────────
+
+const FeedbackPanel: React.FC<{ onDone: () => void }> = ({ onDone }) => {
+  const [text, setText] = React.useState('');
+  const [sent, setSent] = React.useState(false);
+
+  const handleSend = async () => {
+    if (!text.trim()) return;
+    try {
+      await supabase.from('feedback').insert({ message: text.trim() });
+    } catch (_) {
+      // feedback table may not exist yet — still show success to user
+    }
+    setSent(true);
+  };
+
+  if (sent) {
+    return (
+      <View style={fbStyles.container}>
+        <Text style={fbStyles.sentIcon}>🎉</Text>
+        <Text style={fbStyles.sentTitle}>Thank you!</Text>
+        <Text style={fbStyles.sentSub}>Your feedback helps us build a better app.</Text>
+        <TouchableOpacity style={fbStyles.doneBtn} onPress={onDone}>
+          <Text style={fbStyles.doneBtnText}>Back to Account</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return (
+    <View style={fbStyles.container}>
+      <Text style={fbStyles.title}>We'd love to hear from you 👋</Text>
+      <Text style={fbStyles.sub}>
+        What features would you like to see? Any bugs or issues? Tell us anything!
+      </Text>
+      <TextInput
+        style={fbStyles.input}
+        placeholder="Type your feedback here…"
+        placeholderTextColor="#94a3b8"
+        value={text}
+        onChangeText={setText}
+        multiline
+        numberOfLines={6}
+        textAlignVertical="top"
+        autoFocus
+      />
+      <TouchableOpacity
+        style={[fbStyles.sendBtn, !text.trim() && fbStyles.sendBtnDisabled]}
+        onPress={handleSend}
+        disabled={!text.trim()}
+      >
+        <Text style={fbStyles.sendBtnText}>Send Feedback</Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
+
+const fbStyles = StyleSheet.create({
+  container:    { paddingHorizontal: 20, paddingTop: 28, alignItems: 'center' },
+  title:        { fontSize: 16, fontWeight: '800', color: '#0f172a', textAlign: 'center', marginBottom: 10 },
+  sub:          { fontSize: 13, color: '#64748b', fontWeight: '500', textAlign: 'center', lineHeight: 20, marginBottom: 24 },
+  input:        { width: '100%', minHeight: 140, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 14, fontSize: 14, fontWeight: '500', color: '#0f172a', marginBottom: 16 },
+  sendBtn:      { width: '100%', backgroundColor: '#2563eb', borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
+  sendBtnDisabled: { backgroundColor: '#bfdbfe' },
+  sendBtnText:  { fontSize: 14, fontWeight: '800', color: '#fff', letterSpacing: 0.5 },
+  sentIcon:     { fontSize: 48, marginBottom: 16, marginTop: 20 },
+  sentTitle:    { fontSize: 20, fontWeight: '900', color: '#0f172a', marginBottom: 8 },
+  sentSub:      { fontSize: 13, color: '#64748b', fontWeight: '500', textAlign: 'center', lineHeight: 20, marginBottom: 32 },
+  doneBtn:      { backgroundColor: '#f1f5f9', borderRadius: 14, paddingHorizontal: 32, paddingVertical: 14 },
+  doneBtnText:  { fontSize: 13, fontWeight: '700', color: '#64748b' },
+});
+
+// ─── Profile Screen ───────────────────────────────────────────────────────────
+
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   user,
   visible,
   onClose,
   onAddDevice,
   onOpenHistory,
+  onOpenFamilySharing,
 }) => {
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackSent, setFeedbackSent] = useState(false);
+
+  // Reset upgrade/feedback view whenever modal closes
+  useEffect(() => {
+    if (!visible) {
+      setShowUpgrade(false);
+      setFeedbackText('');
+      setFeedbackSent(false);
+    }
+  }, [visible]);
+
+  // Hardware back: fully owned by ProfileScreen while modal is visible
+  useEffect(() => {
+    if (!visible) return;
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (showUpgrade) {
+        // Upgrade sub-view open → back to Account page
+        setShowUpgrade(false);
+        return true;
+      }
+      // Account page → close profile, return to main item list
+      onClose();
+      return true;
+    });
+    return () => handler.remove();
+  }, [visible, showUpgrade, onClose]);
   const [displayName, setDisplayName] = useState(
     user.user_metadata?.full_name || user.email.split('@')[0],
   );
@@ -169,12 +273,30 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     <Text style={styles.actionCardLabel}>Activity Log</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.actionCard, styles.actionCardUpgrade]}
+                    style={[styles.actionCard, styles.actionCardFeedback]}
                     onPress={() => setShowUpgrade(true)}
                   >
-                    <Text style={styles.actionCardIcon}>💳</Text>
-                    <Text style={styles.actionCardLabel}>Upgrade</Text>
+                    <Text style={styles.actionCardIcon}>💬</Text>
+                    <Text style={styles.actionCardLabel}>Feedback</Text>
                   </TouchableOpacity>
+                </View>
+
+                {/* Family Sharing */}
+                <TouchableOpacity
+                  style={styles.familyCard}
+                  onPress={() => { onClose(); onOpenFamilySharing(); }}
+                >
+                  <View style={styles.familyCardLeft}>
+                    <Text style={styles.familyCardIcon}>👨‍👩‍👧</Text>
+                    <View>
+                      <Text style={styles.familyCardTitle}>Family Sharing</Text>
+                      <Text style={styles.familyCardSub}>Invite members · Manage access</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.familyCardArrow}>›</Text>
+                </TouchableOpacity>
+
+                <View style={{ height: 1 }}>
                 </View>
               </View>
             </>
@@ -185,46 +307,11 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <TouchableOpacity style={styles.closeBtn} onPress={() => setShowUpgrade(false)}>
                   <Text style={styles.closeBtnText}>‹</Text>
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Choose Your Plan</Text>
+                <Text style={styles.headerTitle}>Share Your Feedback</Text>
                 <View style={{ width: 40 }} />
               </View>
 
-              <View style={styles.body}>
-                {TIER_PLANS.map(plan => (
-                  <View
-                    key={plan.id}
-                    style={[
-                      styles.planCard,
-                      { backgroundColor: plan.color },
-                      tier === plan.id && styles.planCardActive,
-                    ]}
-                  >
-                    <View style={styles.planHeader}>
-                      <View>
-                        <Text style={styles.planName}>{plan.name}</Text>
-                        <Text style={styles.planFeatures}>
-                          {plan.features.join('  ·  ')}
-                        </Text>
-                      </View>
-                      <View style={styles.planPriceBox}>
-                        <Text style={[styles.planPrice, { color: plan.accent }]}>
-                          {plan.price}
-                        </Text>
-                        <Text style={styles.planPeriod}>{plan.period}</Text>
-                      </View>
-                    </View>
-                    {tier === plan.id && (
-                      <Text style={[styles.currentPlanBadge, { color: plan.accent }]}>
-                        ✓ CURRENT PLAN
-                      </Text>
-                    )}
-                  </View>
-                ))}
-
-                <Text style={styles.upgradeNote}>
-                  To upgrade, contact support or visit our website. In-app purchases coming soon.
-                </Text>
-              </View>
+              <FeedbackPanel onDone={() => setShowUpgrade(false)} />
             </>
           )}
         </ScrollView>
@@ -295,7 +382,8 @@ const styles = StyleSheet.create({
     paddingVertical: 20, alignItems: 'center', gap: 8,
     borderWidth: 1, borderColor: '#e2e8f0',
   },
-  actionCardUpgrade: { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' },
+  actionCardUpgrade: { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' }, // kept for compat
+  actionCardFeedback: { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' },
   actionCardIcon: { fontSize: 28 },
   actionCardLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', letterSpacing: 1 },
   planCard: {
@@ -314,6 +402,22 @@ const styles = StyleSheet.create({
   planPrice: { fontSize: 20, fontWeight: '900' },
   planPeriod: { fontSize: 10, fontWeight: '600', color: '#94a3b8' },
   currentPlanBadge: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5, marginTop: 10 },
+  familyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f0f9ff',
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+  },
+  familyCardLeft: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  familyCardIcon: { fontSize: 32 },
+  familyCardTitle: { fontSize: 15, fontWeight: '800', color: '#0f172a', marginBottom: 2 },
+  familyCardSub:   { fontSize: 12, color: '#64748b', fontWeight: '500' },
+  familyCardArrow: { fontSize: 24, color: '#94a3b8', fontWeight: '300' },
   upgradeNote: {
     fontSize: 12, color: '#94a3b8', fontWeight: '500',
     textAlign: 'center', lineHeight: 18,

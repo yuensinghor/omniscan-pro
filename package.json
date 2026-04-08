@@ -9,6 +9,7 @@
     "proto:generate": "pbjs -t static-module -w commonjs -o src/proto/compiled.js src/proto/session.proto src/proto/wifi_config.proto && pbts -o src/proto/compiled.d.ts src/proto/compiled.js"
   },
   "dependencies": {
+    "@orbital-systems/react-native-esp-idf-provisioning": "^0.5.0",
     "@react-native-async-storage/async-storage": "1.23.1",
     "@supabase/supabase-js": "^2.43.0",
     "buffer": "^6.0.3",
@@ -21,6 +22,7 @@
     "react": "18.2.0",
     "react-native": "0.74.1",
     "react-native-ble-plx": "^3.1.2",
+    "react-native-dotenv": "^3.4.11",
     "react-native-gesture-handler": "~2.16.1",
     "react-native-quick-crypto": "^0.7.0",
     "react-native-reanimated": "~3.10.1",

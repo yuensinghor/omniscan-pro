@@ -7,11 +7,16 @@
       "ios": { "simulator": true }
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
     },
     "production": {
       "autoIncrement": true
     }
   },
-  "submit": { "production": {} }
+  "submit": {
+    "production": {}
+  }
 }

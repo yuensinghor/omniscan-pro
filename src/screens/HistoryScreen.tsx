@@ -71,10 +71,19 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({ userId, onBack }) 
       setLoading(true);
       const { data, error: fetchError } = await supabase
         .from('inventory_logs')
-        .select('*')
+        .select('*, products(name)')
         .eq('owner_id', userId)
         .order('created_at', { ascending: false })
         .limit(100);
+
+      // Flatten product name into log row
+      if (data) {
+        data.forEach((log: any) => {
+          if (!log.name && log.products?.name) {
+            log.name = log.products.name;
+          }
+        });
+      }
 
       if (fetchError) throw fetchError;
       setLogs(data || []);

@@ -1,3 +1,8 @@
+// src/screens/NewItemScreen.tsx
+// When a new barcode is scanned:
+//   1. Upsert product metadata into `products` table
+//   2. Insert quantity event into `inventory_logs`
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -32,12 +37,12 @@ export const NewItemScreen: React.FC<NewItemScreenProps> = ({
   onSaved,
   onCancel,
 }) => {
-  const [name, setName]           = useState('');
-  const [category, setCategory]   = useState('');
-  const [imageUrl, setImageUrl]   = useState('');
-  const [looking, setLooking]     = useState(false);
-  const [saving, setSaving]       = useState(false);
-  const [lookupFailed, setLookupFailed] = useState(false);
+  const [name, setName]                   = useState('');
+  const [category, setCategory]           = useState('');
+  const [imageUrl, setImageUrl]           = useState('');
+  const [looking, setLooking]             = useState(false);
+  const [saving, setSaving]               = useState(false);
+  const [lookupFailed, setLookupFailed]   = useState(false);
 
   // Auto-detect product when modal opens
   useEffect(() => {
@@ -93,17 +98,34 @@ export const NewItemScreen: React.FC<NewItemScreenProps> = ({
     }
     setSaving(true);
     try {
-      const { error } = await supabase.from('inventory_logs').insert({
-        barcode,
-        action_type: mode === 'LOOKUP' ? 'IN' : mode,
-        device_id:   'MOBILE_SCANNER',
-        owner_id:    userId,
-        quantity:    1,
-        name:        name.trim(),
-        category:    category.trim() || 'General',
-        image_url:   imageUrl,
-      });
-      if (error) throw error;
+      // Step 1 — Upsert product metadata into products table
+      const { error: productError } = await supabase
+        .from('products')
+        .upsert({
+          barcode:   barcode,
+          owner_id:  userId,
+          name:      name.trim(),
+          category:  category.trim() || 'General',
+          image_url: imageUrl || null,
+        }, {
+          onConflict: 'barcode,owner_id',
+        });
+
+      if (productError) throw productError;
+
+      // Step 2 — Insert quantity event into inventory_logs
+      const { error: logError } = await supabase
+        .from('inventory_logs')
+        .insert({
+          barcode,
+          action_type: mode === 'LOOKUP' ? 'IN' : mode,
+          device_id:   'MOBILE_SCANNER',
+          owner_id:    userId,
+          quantity:    1,
+        });
+
+      if (logError) throw logError;
+
       onSaved();
     } catch (err: any) {
       Alert.alert('Error', err.message);
