@@ -66,34 +66,32 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({ userId, onBack }) 
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const { data, error: fetchError } = await supabase
-        .from('inventory_logs')
-        .select('*, products(name)')
-        .eq('owner_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(100);
+const fetchData = useCallback(async () => {
+  try {
+    setLoading(true);
+    const { data, error: fetchError } = await supabase
+      .from('inventory_logs')
+      .select('*, products(name)')
+      .eq('owner_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(100);
 
-      // Flatten product name into log row
-      if (data) {
-        data.forEach((log: any) => {
-          if (!log.name && log.products?.name) {
-            log.name = log.products.name;
-          }
-        });
-      }
+    if (fetchError) throw fetchError;
 
-      if (fetchError) throw fetchError;
-      setLogs(data || []);
-      setError(null);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load history.');
-    } finally {
-      setLoading(false);
-    }
-  }, [userId]);
+    // Flatten product name into log row
+    const flatData = (data || []).map((log: any) => ({
+      ...log,
+      name: log.products?.name ?? null,
+    }));
+
+    setLogs(flatData);
+    setError(null);
+  } catch (err: any) {
+    setError(err.message || 'Failed to load history.');
+  } finally {
+    setLoading(false);
+  }
+}, [userId]);
 
   useEffect(() => {
     fetchData();
