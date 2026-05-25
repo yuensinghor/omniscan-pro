@@ -6,65 +6,52 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
+import { t } from '../i18n';
 
 interface Member {
   user_id:   string;
   email:     string;
-  role:      string;
   joined_at: string;
 }
 
 interface FamilySharingScreenProps {
-  userId:    string;
-  userEmail: string;
-  visible:   boolean;
-  onClose:   () => void;
-  // Called after any membership change so App.tsx can reload workspace list
-  onWorkspaceChanged: () => void;
+  userId:  string;
+  visible: boolean;
+  onClose: () => void;
+  onWorkspaceChanged: (ownerIdToLoad: string | null) => void;
 }
 
 export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
-  userId, userEmail, visible, onClose, onWorkspaceChanged,
+  userId, visible, onClose, onWorkspaceChanged,
 }) => {
-  const [loading, setLoading]         = useState(true);
-  const [members, setMembers]         = useState<Member[]>([]);
-  const [isOwner, setIsOwner]         = useState(false);
-  const [isMember, setIsMember]       = useState(false);
-  const [ownerEmail, setOwnerEmail]   = useState<string | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const [members, setMembers]       = useState<Member[]>([]);
+  const [isOwner, setIsOwner]       = useState(false);
+  const [isMember, setIsMember]     = useState(false);
+  const [ownerEmail, setOwnerEmail] = useState<string | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [email, setEmail]             = useState('');
-  const [inviting, setInviting]       = useState(false);
+  const [email, setEmail]           = useState('');
+  const [inviting, setInviting]     = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data, error } = await supabase.rpc('get_my_workspace', { p_user_id: userId });
       if (error) throw error;
-
       if (data?.member) {
         setWorkspaceId(data.workspace_id);
         if (data.owner_id === userId) {
-          // User is the owner — show their members list
-          setIsOwner(true);
-          setIsMember(false);
-          setMembers(
-            (data.members || []).filter((m: Member) => m.user_id !== userId)
-          );
+          setIsOwner(true); setIsMember(false);
+          setMembers(data.members?.filter((m: Member) => m.user_id !== userId) || []);
           setOwnerEmail(null);
         } else {
-          // User is a member of someone else's workspace
-          setIsOwner(false);
-          setIsMember(true);
+          setIsOwner(false); setIsMember(true);
           setOwnerEmail(data.owner_email || null);
           setMembers([]);
         }
       } else {
-        // User has no workspace at all yet
-        setIsOwner(false);
-        setIsMember(false);
-        setWorkspaceId(null);
-        setMembers([]);
-        setOwnerEmail(null);
+        setIsOwner(false); setIsMember(false);
+        setWorkspaceId(null); setMembers([]); setOwnerEmail(null);
       }
     } catch (err: any) {
       Alert.alert('Error', err.message);
@@ -78,11 +65,7 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
   const handleInvite = async () => {
     const trimmed = email.trim().toLowerCase();
     if (!trimmed || !trimmed.includes('@')) {
-      Alert.alert('Invalid email', 'Please enter a valid email address.');
-      return;
-    }
-    if (trimmed === userEmail.toLowerCase()) {
-      Alert.alert('Invalid', 'You cannot add yourself.');
+      Alert.alert('Invalid email', t.invalidEmail);
       return;
     }
     setInviting(true);
@@ -102,68 +85,47 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
         body: { to_email: trimmed, workspace_name: 'My Workspace' },
       }).catch(() => {});
 
-      Alert.alert('✅ Added!', `${trimmed} can now log in and access your inventory.`);
+      Alert.alert('✅', t.inviteSuccess(trimmed));
       setEmail('');
       await load();
-      onWorkspaceChanged();
     } catch (err: any) {
-      Alert.alert('Invite failed', err.message);
+      Alert.alert(t.inviteFailed, err.message);
     } finally {
       setInviting(false);
     }
   };
 
   const handleRemove = (member: Member) => {
-    Alert.alert('Remove Member', `Remove ${member.email} from your workspace?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove', style: 'destructive', onPress: async () => {
-          try {
-            const { error } = await supabase.rpc('remove_workspace_member', {
-              p_workspace_id: workspaceId,
-              p_user_id:      member.user_id,
-              p_owner_id:     userId,
-            });
-            if (error) throw error;
-            await load();
-            onWorkspaceChanged();
-          } catch (err: any) {
-            Alert.alert('Error', err.message);
-          }
-        },
-      },
+    Alert.alert(t.removeMember, t.removeConfirm(member.email), [
+      { text: t.cancel, style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: async () => {
+        try {
+          const { error } = await supabase.from('workspace_members')
+            .delete().eq('user_id', member.user_id).eq('workspace_id', workspaceId);
+          if (error) throw error;
+          await load();
+        } catch (err: any) { Alert.alert('Error', err.message); }
+      }},
     ]);
   };
 
   const handleLeave = () => {
-    Alert.alert(
-      'Leave Workspace',
-      'You will return to your own inventory. You can be re-added later.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Leave', style: 'destructive', onPress: async () => {
-            try {
-              const { error } = await supabase
-                .from('workspace_members')
-                .delete()
-                .eq('user_id', userId);
-              if (error) throw error;
-              onWorkspaceChanged();
-              onClose();
-            } catch (err: any) {
-              Alert.alert('Error', err.message);
-            }
-          },
-        },
-      ]
-    );
+    Alert.alert(t.leaveWorkspace, t.leaveWorkspaceMsg, [
+      { text: t.cancel, style: 'cancel' },
+      { text: t.leave, style: 'destructive', onPress: async () => {
+        try {
+          const { error } = await supabase.from('workspace_members').delete().eq('user_id', userId);
+          if (error) throw error;
+          onWorkspaceChanged(null);
+          onClose();
+        } catch (err: any) { Alert.alert('Error', err.message); }
+      }},
+    ]);
   };
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
             <Text style={styles.closeBtnText}>‹</Text>
@@ -173,19 +135,15 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
         </View>
 
         {loading ? (
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color="#10b981" />
-          </View>
+          <View style={styles.center}><ActivityIndicator size="large" color="#10b981" /></View>
         ) : isMember ? (
-          // ── Member view: user belongs to someone else's workspace ──────────
           <ScrollView contentContainerStyle={styles.section}>
-            <View style={styles.infoCard}>
-              <Text style={styles.infoIcon}>👥</Text>
-              <Text style={styles.infoTitle}>SHARED ACCESS</Text>
-              <Text style={styles.infoName}>{ownerEmail ?? 'a shared workspace'}</Text>
-              <Text style={styles.infoSub}>
-                You have access to {ownerEmail ? `${ownerEmail}'s` : 'this'} inventory.
-                You can switch between your own inventory and theirs from the dashboard.
+            <View style={styles.membershipCard}>
+              <Text style={styles.membershipIcon}>👥</Text>
+              <Text style={styles.membershipTitle}>YOU'RE SHARING</Text>
+              <Text style={styles.membershipName}>{ownerEmail ?? 'a shared workspace'}</Text>
+              <Text style={styles.membershipSub}>
+                You can view and edit {ownerEmail ? `${ownerEmail}'s` : 'this'} inventory.
               </Text>
               <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave}>
                 <Text style={styles.leaveBtnText}>Leave Workspace</Text>
@@ -193,18 +151,11 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
             </View>
           </ScrollView>
         ) : (
-          // ── Owner view: manage members ────────────────────────────────────
           <ScrollView contentContainerStyle={styles.section}>
-
-            {/* How it works info box */}
-            <View style={styles.howItWorks}>
-              <Text style={styles.howTitle}>How it works</Text>
-              <Text style={styles.howText}>
-                Add someone's email below. Once they log in with that email, they'll see a switch in their dashboard to view your inventory. They keep their own inventory too.
-              </Text>
-            </View>
-
             <Text style={styles.sectionTitle}>Add a Member</Text>
+            <Text style={styles.sectionSub}>
+              Enter their email. Once they sign in with that email, they can access your inventory.
+            </Text>
             <TextInput
               style={styles.input}
               value={email}
@@ -222,31 +173,22 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
             >
               {inviting
                 ? <ActivityIndicator color="#fff" />
-                : <Text style={styles.inviteBtnText}>＋  Add Member</Text>
-              }
+                : <Text style={styles.inviteBtnText}>＋  Add Member</Text>}
             </TouchableOpacity>
 
-            {/* Members list */}
             {members.length > 0 && (
               <>
                 <Text style={[styles.sectionTitle, { marginTop: 36 }]}>Current Members</Text>
                 {members.map(m => (
                   <View key={m.user_id} style={styles.memberRow}>
                     <View style={styles.memberAvatar}>
-                      <Text style={styles.memberAvatarText}>
-                        {m.email.charAt(0).toUpperCase()}
-                      </Text>
+                      <Text style={styles.memberAvatarText}>{m.email.charAt(0).toUpperCase()}</Text>
                     </View>
                     <View style={styles.memberInfo}>
                       <Text style={styles.memberEmail} numberOfLines={1}>{m.email}</Text>
-                      <View style={styles.memberMeta}>
-                        <View style={styles.roleChip}>
-                          <Text style={styles.roleChipText}>{(m.role || 'editor').toUpperCase()}</Text>
-                        </View>
-                        <Text style={styles.memberJoined}>
-                          Added {new Date(m.joined_at).toLocaleDateString()}
-                        </Text>
-                      </View>
+                      <Text style={styles.memberJoined}>
+                        Added {new Date(m.joined_at).toLocaleDateString()}
+                      </Text>
                     </View>
                     <TouchableOpacity style={styles.removeBtn} onPress={() => handleRemove(m)}>
                       <Text style={styles.removeBtnText}>✕</Text>
@@ -260,9 +202,7 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
               <View style={styles.emptyState}>
                 <Text style={styles.emptyIcon}>👤</Text>
                 <Text style={styles.emptyTitle}>No members yet</Text>
-                <Text style={styles.emptySub}>
-                  Add someone's email above to share your inventory with them.
-                </Text>
+                <Text style={styles.emptySub}>Add someone's email above to share your inventory with them.</Text>
               </View>
             )}
           </ScrollView>
@@ -280,10 +220,8 @@ const styles = StyleSheet.create({
   closeBtnText:     { fontSize: 26, color: '#64748b', fontWeight: '300', lineHeight: 30 },
   center:           { flex: 1, alignItems: 'center', justifyContent: 'center' },
   section:          { padding: 24 },
-  sectionTitle:     { fontSize: 15, fontWeight: '800', color: '#0f172a', marginBottom: 12 },
-  howItWorks:       { backgroundColor: '#f0fdf4', borderRadius: 14, padding: 16, marginBottom: 28, borderWidth: 1, borderColor: '#bbf7d0' },
-  howTitle:         { fontSize: 12, fontWeight: '800', color: '#059669', marginBottom: 6, letterSpacing: 0.5 },
-  howText:          { fontSize: 13, color: '#374151', lineHeight: 20 },
+  sectionTitle:     { fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 6 },
+  sectionSub:       { fontSize: 13, color: '#64748b', lineHeight: 20, marginBottom: 20 },
   input:            { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 14, paddingHorizontal: 18, paddingVertical: 14, fontSize: 15, fontWeight: '600', color: '#0f172a', marginBottom: 14 },
   inviteBtn:        { backgroundColor: '#10b981', borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
   inviteBtnDisabled:{ opacity: 0.5 },
@@ -292,22 +230,17 @@ const styles = StyleSheet.create({
   memberAvatar:     { width: 40, height: 40, borderRadius: 20, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center' },
   memberAvatarText: { color: '#fff', fontWeight: '800', fontSize: 16 },
   memberInfo:       { flex: 1 },
-  memberEmail:      { fontSize: 13, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
-  memberMeta:       { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  roleChip:         { backgroundColor: '#e0f2fe', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
-  roleChipText:     { fontSize: 9, fontWeight: '800', color: '#0284c7', letterSpacing: 0.5 },
-  memberJoined:     { fontSize: 11, color: '#94a3b8' },
+  memberEmail:      { fontSize: 13, fontWeight: '700', color: '#0f172a' },
+  memberJoined:     { fontSize: 11, color: '#94a3b8', marginTop: 2 },
   removeBtn:        { width: 30, height: 30, borderRadius: 8, backgroundColor: '#fff1f2', alignItems: 'center', justifyContent: 'center' },
   removeBtnText:    { fontSize: 12, color: '#ef4444', fontWeight: '700' },
-  // Member view
-  infoCard:         { backgroundColor: '#f0fdf4', borderRadius: 20, padding: 28, alignItems: 'center', borderWidth: 1, borderColor: '#bbf7d0' },
-  infoIcon:         { fontSize: 48, marginBottom: 12 },
-  infoTitle:        { fontSize: 11, fontWeight: '700', color: '#059669', letterSpacing: 1.5, marginBottom: 6 },
-  infoName:         { fontSize: 18, fontWeight: '900', color: '#0f172a', marginBottom: 10, textAlign: 'center' },
-  infoSub:          { fontSize: 13, color: '#64748b', textAlign: 'center', lineHeight: 20, marginBottom: 28 },
+  membershipCard:   { backgroundColor: '#f0fdf4', borderRadius: 20, padding: 28, alignItems: 'center', borderWidth: 1, borderColor: '#bbf7d0' },
+  membershipIcon:   { fontSize: 48, marginBottom: 12 },
+  membershipTitle:  { fontSize: 11, fontWeight: '700', color: '#059669', letterSpacing: 1.5, marginBottom: 6 },
+  membershipName:   { fontSize: 18, fontWeight: '900', color: '#0f172a', marginBottom: 10, textAlign: 'center' },
+  membershipSub:    { fontSize: 13, color: '#64748b', textAlign: 'center', lineHeight: 20, marginBottom: 28 },
   leaveBtn:         { borderWidth: 1.5, borderColor: '#fecaca', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12 },
   leaveBtnText:     { color: '#ef4444', fontWeight: '700', fontSize: 13 },
-  // Empty state
   emptyState:       { alignItems: 'center', paddingVertical: 40 },
   emptyIcon:        { fontSize: 48, marginBottom: 12 },
   emptyTitle:       { fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 6 },

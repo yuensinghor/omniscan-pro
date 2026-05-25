@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { InventoryLog } from '../types';
+import { t } from '../i18n';
 
 interface HistoryScreenProps {
   userId: string;
@@ -66,32 +67,34 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({ userId, onBack }) 
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
 
-const fetchData = useCallback(async () => {
-  try {
-    setLoading(true);
-    const { data, error: fetchError } = await supabase
-      .from('inventory_logs')
-      .select('*, products(name)')
-      .eq('owner_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(100);
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const { data, error: fetchError } = await supabase
+        .from('inventory_logs')
+        .select('*, products(name)')
+        .eq('owner_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(100);
 
-    if (fetchError) throw fetchError;
+      // Flatten product name into log row
+      if (data) {
+        data.forEach((log: any) => {
+          if (!log.name && log.products?.name) {
+            log.name = log.products.name;
+          }
+        });
+      }
 
-    // Flatten product name into log row
-    const flatData = (data || []).map((log: any) => ({
-      ...log,
-      name: log.products?.name ?? null,
-    }));
-
-    setLogs(flatData);
-    setError(null);
-  } catch (err: any) {
-    setError(err.message || 'Failed to load history.');
-  } finally {
-    setLoading(false);
-  }
-}, [userId]);
+      if (fetchError) throw fetchError;
+      setLogs(data || []);
+      setError(null);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load history.');
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
 
   useEffect(() => {
     fetchData();

@@ -12,11 +12,12 @@ import {
   BackHandler,
   Linking,
   ActivityIndicator,
+  Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { AppUser, UserTier } from '../types';
-import { SUPABASE_URL } from '@env';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env';
 import { t, setLang, getLang, Lang } from '../i18n';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
@@ -146,7 +147,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [showUpgrade, setShowUpgrade]           = useState(false);
   const [showPhotoOptions, setShowPhotoOptions] = useState(false);
   const [uploadingAvatar, setUploadingAvatar]   = useState(false);
-  const [pendingAction, setPendingAction]       = useState<'gallery' | 'random' | null>(null);
+  const [modalPaused, setModalPaused]           = useState(false);
   const [feedbackText, setFeedbackText]         = useState('');
   const [feedbackSent, setFeedbackSent]         = useState(false);
   const [displayName, setDisplayName]           = useState(
@@ -185,7 +186,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     await supabase.auth.updateUser({ data: { avatar_seed: seed, avatar_url: null } });
   }, []);
 
+  const closePhotoOptions = useCallback(() => {
+    setShowPhotoOptions(false);
+  }, []);
+
   const handlePickAvatar = useCallback(async () => {
+    setModalPaused(true);
+    await new Promise(resolve => setTimeout(resolve, 450));
+
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
@@ -203,35 +211,54 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       setUploadingAvatar(true);
       const uri  = result.assets[0].uri;
       const path = `${user.id}/avatar.jpg`;
+      const storageBaseUrl = SUPABASE_URL.replace(/\/$/, '');
 
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
       if (!accessToken) throw new Error('Not authenticated.');
 
-      const uploadUrl = `${SUPABASE_URL}/storage/v1/object/avatars/${path}`;
+      const uploadUrl = `${storageBaseUrl}/storage/v1/object/avatars/${path}`;
       const uploadResult = await FileSystem.uploadAsync(uploadUrl, uri, {
         httpMethod:  'PUT',
         uploadType:  FileSystem.FileSystemUploadType.BINARY_CONTENT,
         headers: {
           'Authorization': `Bearer ${accessToken}`,
+          'apikey':        SUPABASE_ANON_KEY,
           'Content-Type':  'image/jpeg',
           'x-upsert':      'true',
         },
       });
 
       if (uploadResult.status !== 200 && uploadResult.status !== 201) {
-        throw new Error(`Upload failed (${uploadResult.status}): ${uploadResult.body}`);
+        throw new Error(`Avatar upload failed with status ${uploadResult.status}`);
       }
 
-      const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/avatars/${path}?t=${Date.now()}`;
+      const publicUrl = `${storageBaseUrl}/storage/v1/object/public/avatars/${path}`;
+      const cacheBustedUrl = `${publicUrl}?t=${Date.now()}`;
       await supabase.auth.updateUser({ data: { avatar_url: publicUrl } });
-      setAvatarUrl(publicUrl);
+      setAvatarUrl(cacheBustedUrl);
     } catch (err: any) {
-      Alert.alert('Upload Failed', err?.message || t.uploadFailed);
+      console.warn('[ProfileScreen] Avatar upload failed', err);
+      Alert.alert('Upload Failed', t.uploadFailed);
     } finally {
       setUploadingAvatar(false);
+      setModalPaused(false);
     }
   }, [user.id]);
+
+  const handleGalleryOption = useCallback(() => {
+    setShowPhotoOptions(false);
+    setTimeout(() => {
+      handlePickAvatar();
+    }, 500);
+  }, [handlePickAvatar]);
+
+  const handleRandomAvatarOption = useCallback(() => {
+    setShowPhotoOptions(false);
+    setTimeout(() => {
+      handleRandomAvatar();
+    }, 200);
+  }, [handleRandomAvatar]);
 
   const handleSignOut = useCallback(async () => {
     Alert.alert(t.signOut, t.signOutConfirm, [
@@ -272,33 +299,20 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     setDisplayName(user.user_metadata?.full_name || user.email.split('@')[0]);
   }, [user.user_metadata]);
 
-  // Fire pending photo action after bottom sheet has fully dismissed
-  // Solves Android modal stacking — ImagePicker must open after sheet is gone
-  useEffect(() => {
-    if (showPhotoOptions) return;
-    if (!pendingAction) return;
-    const action = pendingAction;
-    setPendingAction(null);
-    const timer = setTimeout(() => {
-      if (action === 'gallery') handlePickAvatar();
-      if (action === 'random')  handleRandomAvatar();
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [showPhotoOptions, pendingAction, handlePickAvatar, handleRandomAvatar]);
-
   // Hardware back button
   useEffect(() => {
     if (!visible) return;
     const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (showPhotoOptions) { closePhotoOptions(); return true; }
       if (showUpgrade) { setShowUpgrade(false); return true; }
       onClose();
       return true;
     });
     return () => handler.remove();
-  }, [visible, showUpgrade, onClose]);
+  }, [visible, showPhotoOptions, showUpgrade, closePhotoOptions, onClose]);
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible && !modalPaused} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <ScrollView keyboardShouldPersistTaps="handled">
           {!showUpgrade ? (
@@ -434,43 +448,37 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </>
           )}
         </ScrollView>
-      {/* Photo options bottom sheet */}
-      <Modal
-        visible={showPhotoOptions}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowPhotoOptions(false)}
-      >
-        <TouchableOpacity
+        {showPhotoOptions && (
+        <View style={styles.photoSheetModal}>
+        <Pressable
           style={styles.photoSheetBackdrop}
-          activeOpacity={1}
-          onPress={() => setShowPhotoOptions(false)}
-        >
+          onPress={() => closePhotoOptions()}
+        />
           <View style={styles.photoSheet}>
             <Text style={styles.photoSheetTitle}>Profile Photo</Text>
             <TouchableOpacity
               style={styles.photoSheetBtn}
-              onPress={() => { setPendingAction('gallery'); setShowPhotoOptions(false); }}
+              onPress={handleGalleryOption}
             >
               <Text style={styles.photoSheetBtnIcon}>📷</Text>
               <Text style={styles.photoSheetBtnText}>Upload from Gallery</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.photoSheetBtn}
-              onPress={() => { setPendingAction('random'); setShowPhotoOptions(false); }}
+              onPress={handleRandomAvatarOption}
             >
               <Text style={styles.photoSheetBtnIcon}>🎲</Text>
               <Text style={styles.photoSheetBtnText}>Random Avatar</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.photoSheetBtn, styles.photoSheetCancel]}
-              onPress={() => setShowPhotoOptions(false)}
+              onPress={() => closePhotoOptions()}
             >
               <Text style={[styles.photoSheetBtnText, { color: '#94a3b8' }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
-      </Modal>
+        </View>
+        )}
 
       </SafeAreaView>
     </Modal>
@@ -594,7 +602,8 @@ const styles = StyleSheet.create({
     borderColor: '#fde68a',
   },
   avatarUploading: { position: 'absolute', width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
-  photoSheetBackdrop:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  photoSheetModal:     { ...StyleSheet.absoluteFillObject, justifyContent: 'flex-end', zIndex: 20, elevation: 20 },
+  photoSheetBackdrop:  { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
   photoSheet:          { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
   photoSheetTitle:     { fontSize: 13, fontWeight: '700', color: '#94a3b8', textAlign: 'center', marginBottom: 16, letterSpacing: 1 },
   photoSheetBtn:       { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 16, borderTopWidth: 1, borderTopColor: '#f1f5f9' },

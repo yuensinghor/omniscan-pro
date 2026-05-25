@@ -8,6 +8,7 @@ export interface AppUser {
   user_metadata?: {
     full_name?: string;
     avatar_seed?: string;
+    avatar_url?: string;
     tier?: UserTier;
     valid_until?: string;
   };

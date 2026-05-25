@@ -10,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { InventorySummary } from '../types';
 import { CameraModal } from '../components/CameraModal';
+import { t } from '../i18n';
 
 interface EditItemScreenProps {
   item: InventorySummary;
@@ -17,10 +18,12 @@ interface EditItemScreenProps {
   visible: boolean;
   onClose: () => void;
   onSaved: () => void;
+  isLookup?: boolean; // true = view-only, hide Save/Cancel/Delete/Edit fields
 }
 
+import { SUPABASE_URL } from '@env';
+
 const BUCKET = 'product-images';
-const SUPABASE_URL = 'https://lfvpknapbzplcxrqqhbp.supabase.co';
 
 // Upload a local file:// URI to Supabase Storage, return public URL
 async function uploadPhoto(localUri: string, barcode: string, userId: string): Promise<string> {
@@ -33,12 +36,8 @@ async function uploadPhoto(localUri: string, barcode: string, userId: string): P
     encoding: FileSystem.EncodingType.Base64,
   });
 
-  // Convert base64 to Uint8Array
-  const binaryStr = atob(base64);
-  const bytes     = new Uint8Array(binaryStr.length);
-  for (let i = 0; i < binaryStr.length; i++) {
-    bytes[i] = binaryStr.charCodeAt(i);
-  }
+  // Convert base64 to Uint8Array using Buffer (React Native safe, no atob)
+  const bytes = new Uint8Array(Buffer.from(base64, 'base64'));
 
   const { error } = await supabase.storage
     .from(BUCKET)
@@ -50,7 +49,7 @@ async function uploadPhoto(localUri: string, barcode: string, userId: string): P
 }
 
 export const EditItemScreen: React.FC<EditItemScreenProps> = ({
-  item, userId, visible, onClose, onSaved,
+  item, userId, visible, onClose, onSaved, isLookup = false,
 }) => {
   const [name, setName]               = useState(item.name || '');
   const [category, setCategory]       = useState(item.category || '');
@@ -79,7 +78,7 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Permission denied', 'Allow Photos in Settings → Apps → OmniScan Pro → Permissions.');
+        Alert.alert('Permission denied', t.permissionDenied);
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -93,7 +92,7 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
         setImageUrl(uri);
       }
     } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Could not open gallery');
+      Alert.alert('Gallery Error', t.galleryError);
     } finally {
       setModalPaused(false);
     }
@@ -103,7 +102,7 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
     Alert.alert('Product Photo', 'Choose a source', [
       { text: 'Take Photo',          onPress: handleCameraOpen },
       { text: 'Choose from Gallery', onPress: handleGallery },
-      { text: 'Cancel', style: 'cancel' },
+      { text: t.cancel, style: 'cancel' },
     ]);
   };
 
@@ -130,13 +129,13 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
         token = created.token;
       }
 
-      const shareUrl = `https://lfvpknapbzplcxrqqhbp.supabase.co/functions/v1/share-item?token=${token}`;
+      const shareUrl = `${SUPABASE_URL}/functions/v1/share-item?token=${token}`;
       await Share.share({
         title: item.name || item.barcode,
         message: `Check out ${item.name || 'this product'} — ${shareUrl}\n\nBuild your own Mini Market with OmniScan Pro 🛒`,
       });
     } catch (err: any) {
-      Alert.alert('Share failed', err.message);
+      Alert.alert('Share Unavailable', t.shareUnavailable);
     }
   };
 
@@ -175,7 +174,7 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
       onSaved();
       onClose();
     } catch (err: any) {
-      Alert.alert('Save failed', err.message);
+      Alert.alert('Save Failed', t.saveFailed);
     } finally {
       setSaving(false);
     }
@@ -185,23 +184,37 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
 
   const handleDelete = () => {
     Alert.alert(
-      'Remove Item',
+      t.removeItem,
       'This will zero out the stock and remove the item from your dashboard. History will be preserved.',
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t.cancel, style: 'cancel' },
         {
-          text: 'Remove', style: 'destructive',
+          text: t.remove, style: 'destructive',
           onPress: async () => {
             try {
-              const { error: logError } = await supabase.from('inventory_logs').insert({
-                barcode: item.barcode, action_type: 'DELETE',
-                device_id: 'MOBILE_DELETE', owner_id: userId, quantity: -item.quantity,
-              });
-              if (logError) throw logError;
-              const { error: prodError } = await supabase.from('products').delete().eq('barcode', item.barcode);
+              if (!item.barcode) throw new Error('Item barcode is missing.');
+
+              // Step 1: Delete all inventory logs for this barcode (zeroes out quantity)
+              const { error: logDeleteError } = await supabase
+                .from('inventory_logs')
+                .delete()
+                .eq('barcode', item.barcode)
+                .eq('owner_id', userId);
+              if (logDeleteError) throw logDeleteError;
+
+              // Step 2: Delete the product record itself
+              const { error: prodError } = await supabase
+                .from('products')
+                .delete()
+                .eq('barcode', item.barcode)
+                .eq('owner_id', userId);
               if (prodError) throw prodError;
-              onSaved(); onClose();
-            } catch (err: any) { Alert.alert('Error', err.message); }
+
+              onSaved();
+              onClose();
+            } catch (err: any) {
+              Alert.alert('Delete Failed', t.deleteFailed);
+            }
           },
         },
       ],
@@ -225,25 +238,37 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
               <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
                 <Text style={styles.closeBtnText}>✕</Text>
               </TouchableOpacity>
-              <Text style={styles.headerTitle}>Edit Item</Text>
-              <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete}>
-                <Text style={styles.deleteBtnText}>🗑</Text>
-              </TouchableOpacity>
+              <Text style={styles.headerTitle}>{isLookup ? t.itemDetails : t.editItem}</Text>
+              {!isLookup ? (
+                <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete}>
+                  <Text style={styles.deleteBtnText}>🗑</Text>
+                </TouchableOpacity>
+              ) : <View style={{ width: 40 }} />}
             </View>
 
             <View style={styles.body}>
-              <TouchableOpacity style={styles.imageTap} onPress={handleImagePress}>
-                <Image
-                  source={{ uri: imageUrl || `https://picsum.photos/seed/${item.barcode}/400/300` }}
-                  style={styles.image}
-                  resizeMode="contain"
-                />
-                <View style={styles.imageOverlay}>
-                  {pendingUri
-                    ? <Text style={styles.imageOverlayText}>⚠️  Unsaved — tap SAVE CHANGES</Text>
-                    : <Text style={styles.imageOverlayText}>📷  Change Photo</Text>
-                  }
-                </View>
+              <TouchableOpacity style={styles.imageTap} onPress={isLookup ? undefined : handleImagePress} activeOpacity={isLookup ? 1 : 0.8}>
+                {imageUrl ? (
+                  <>
+                    <Image
+                      source={{ uri: imageUrl }}
+                      style={styles.image}
+                      resizeMode="cover"
+                    />
+                    {!isLookup && (
+                      <View style={styles.imageOverlay}>
+                        <Text style={styles.imageOverlayText}>
+                          {pendingUri ? t.unsavedPhoto : t.changePhoto}
+                        </Text>
+                      </View>
+                    )}
+                  </>
+                ) : (
+                  <View style={styles.imagePlaceholder}>
+                    <Text style={styles.imagePlaceholderIcon}>📷</Text>
+                    {!isLookup && <Text style={styles.imagePlaceholderText}>Tap to add photo</Text>}
+                  </View>
+                )}
               </TouchableOpacity>
 
               <View style={styles.barcodeRow}>
@@ -253,14 +278,16 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
 
               <View style={styles.field}>
                 <Text style={styles.label}>PRODUCT NAME</Text>
-                <TextInput style={styles.input} value={name} onChangeText={setName}
-                  placeholder="e.g. Lychee in Syrup" placeholderTextColor="#94a3b8" />
+                <TextInput style={styles.input} value={name} onChangeText={isLookup ? undefined : setName}
+                  placeholder="e.g. Lychee in Syrup" placeholderTextColor="#94a3b8"
+                  editable={!isLookup} />
               </View>
 
               <View style={styles.field}>
                 <Text style={styles.label}>CATEGORY</Text>
-                <TextInput style={styles.input} value={category} onChangeText={setCategory}
-                  placeholder="e.g. Canned Food" placeholderTextColor="#94a3b8" />
+                <TextInput style={styles.input} value={category} onChangeText={isLookup ? undefined : setCategory}
+                  placeholder="e.g. Canned Food" placeholderTextColor="#94a3b8"
+                  editable={!isLookup} />
               </View>
 
               <View style={styles.qtyRow}>
@@ -275,20 +302,22 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
                 <Text style={styles.shareBtnText}>↗  Share this product</Text>
               </TouchableOpacity>
 
-              <View style={styles.actions}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
-                  <Text style={styles.cancelBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
-                  onPress={handleSave} disabled={saving}
-                >
-                  {saving
-                    ? <ActivityIndicator color="#fff" />
-                    : <Text style={styles.saveBtnText}>SAVE CHANGES</Text>
-                  }
-                </TouchableOpacity>
-              </View>
+              {!isLookup && (
+                <View style={styles.actions}>
+                  <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
+                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+                    onPress={handleSave} disabled={saving}
+                  >
+                    {saving
+                      ? <ActivityIndicator color="#fff" />
+                      : <Text style={styles.saveBtnText}>SAVE CHANGES</Text>
+                    }
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           </ScrollView>
         </SafeAreaView>
@@ -323,6 +352,9 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', gap: 12 },
   cancelBtn: { flex: 1, backgroundColor: '#f1f5f9', borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
   cancelBtnText: { color: '#64748b', fontWeight: '700', fontSize: 13 },
+  imagePlaceholder: { width: '100%', height: 200, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  imagePlaceholderIcon: { fontSize: 40, opacity: 0.3 },
+  imagePlaceholderText: { fontSize: 12, fontWeight: '600', color: '#94a3b8' },
   saveBtn: { flex: 1, backgroundColor: '#0f172a', borderRadius: 16, paddingVertical: 16, alignItems: 'center', shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 8, elevation: 4 },
   saveBtnDisabled: { opacity: 0.5 },
   shareBtn: {

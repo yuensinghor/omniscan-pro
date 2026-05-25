@@ -19,6 +19,7 @@
         "NSBluetoothAlwaysUsageDescription": "OmniScan Pro uses Bluetooth to connect to and provision ESP32 barcode scanners.",
         "NSBluetoothPeripheralUsageDescription": "OmniScan Pro uses Bluetooth to connect to and provision ESP32 barcode scanners.",
         "NSCameraUsageDescription": "OmniScan Pro uses the camera to scan barcodes and capture product photos.",
+        "NSPhotoLibraryUsageDescription": "OmniScan Pro lets you choose photos for profile and product images.",
         "UIBackgroundModes": ["bluetooth-central"]
       }
     },
@@ -35,7 +36,9 @@
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE"
       ]
     },
     "plugins": [
@@ -43,6 +46,12 @@
         "expo-camera",
         {
           "cameraPermission": "OmniScan Pro uses the camera to scan barcodes and capture product photos."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "OmniScan Pro lets you choose photos for profile and product images."
         }
       ],
       "expo-dev-client"
