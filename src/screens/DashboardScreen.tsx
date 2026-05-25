@@ -19,9 +19,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { AppUser, InventorySummary, ScanMode } from '../types';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { shouldShowAds } from '../config/adConfig';
+import { t } from '../i18n';
 
 // ─── Ad Banner ────────────────────────────────────────────────────────────────
+// Placeholder sized to standard AdMob banner (320×50).
+// When AdMob SDK is ready, replace the View contents with:
+//   import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
+//   <BannerAd unitId={AD_CONFIG.bannerAdUnitId} size={BannerAdSize.BANNER} />
+
 const AdBanner: React.FC = () => (
   <View style={adStyles.container}>
     <View style={adStyles.banner}>
@@ -31,114 +38,20 @@ const AdBanner: React.FC = () => (
   </View>
 );
 
-interface WorkspaceOption {
-  ownerId:    string;
-  ownerEmail: string;
-  role:       'owner' | 'editor' | 'viewer';
-  isOwn:      boolean;
-}
-
 interface DashboardScreenProps {
   user: AppUser;
-  userType?: string;
+  userType?: string; // 'free' | 'pro' | 'scanner_owner' — undefined treated as free
   onOpenProfile: () => void;
   workspaceRole?: 'owner' | 'editor' | 'viewer' | null;
-  workspaceOwnerId?: string | null;
-  availableWorkspaces?: WorkspaceOption[];
-  onSwitchWorkspace?: (option: WorkspaceOption) => void;
   onOpenScanner: (mode: ScanMode) => void;
   onEditItem: (item: InventorySummary) => void;
   onOpenHistory: () => void;
   summary: InventorySummary[];
   loading: boolean;
   onRefresh: () => void;
+  // App.tsx calls this once to register the dashboard back-press handler
   registerBackHandler?: (handler: () => boolean) => void;
 }
-
-// ─── Numpad Modal ─────────────────────────────────────────────────────────────
-
-interface NumpadModalProps {
-  visible: boolean;
-  initialQty: number;
-  itemName: string;
-  onConfirm: (newQty: number) => void;
-  onClose: () => void;
-}
-
-const NumpadModal: React.FC<NumpadModalProps> = ({ visible, initialQty, itemName, onConfirm, onClose }) => {
-  const [input, setInput] = useState(String(initialQty));
-
-  // Reset input whenever modal opens with a new item
-  useEffect(() => {
-    if (visible) setInput(String(initialQty));
-  }, [visible, initialQty]);
-
-  const handleKey = (key: string) => {
-    if (key === '⌫') {
-      setInput(prev => prev.length > 1 ? prev.slice(0, -1) : '0');
-    } else {
-      setInput(prev => {
-        const next = prev === '0' ? key : prev + key;
-        // Cap at 4 digits (max 9999)
-        return next.length > 4 ? prev : next;
-      });
-    }
-  };
-
-  const handleConfirm = () => {
-    const newQty = Math.max(0, parseInt(input, 10) || 0);
-    onConfirm(newQty);
-  };
-
-  const keys = ['1','2','3','4','5','6','7','8','9','0','⌫'];
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={numpadStyles.overlay}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View style={numpadStyles.sheet}>
-          {/* Handle bar */}
-          <View style={numpadStyles.handle} />
-
-          {/* Item name */}
-          <Text style={numpadStyles.itemName} numberOfLines={1}>{itemName}</Text>
-          <Text style={numpadStyles.label}>SET QUANTITY</Text>
-
-          {/* Display */}
-          <View style={numpadStyles.display}>
-            <Text style={numpadStyles.displayText}>{input}</Text>
-          </View>
-
-          {/* Keys grid */}
-          <View style={numpadStyles.grid}>
-            {keys.map((key) => (
-              <TouchableOpacity
-                key={key}
-                style={[numpadStyles.key, key === '⌫' && numpadStyles.keyBackspace]}
-                onPress={() => handleKey(key)}
-                activeOpacity={0.7}
-              >
-                <Text style={[numpadStyles.keyText, key === '⌫' && numpadStyles.keyBackspaceText]}>
-                  {key}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Actions */}
-          <View style={numpadStyles.actions}>
-            <TouchableOpacity style={numpadStyles.cancelBtn} onPress={onClose}>
-              <Text style={numpadStyles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={numpadStyles.confirmBtn} onPress={handleConfirm}>
-              <Text style={numpadStyles.confirmText}>Confirm</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-};
 
 // ─── Category Drawer ──────────────────────────────────────────────────────────
 
@@ -186,7 +99,7 @@ const CategoryDrawer: React.FC<DrawerProps> = ({
   </Modal>
 );
 
-// ─── Photo Viewer ─────────────────────────────────────────────────────────────
+// ─── Photo Viewer ────────────────────────────────────────────────────────────
 
 const PhotoViewer: React.FC<{
   uri: string | null;
@@ -211,138 +124,166 @@ const PhotoViewer: React.FC<{
   </Modal>
 );
 
-// ─── Inventory Card ───────────────────────────────────────────────────────────
+// ─── Numpad Modal ────────────────────────────────────────────────────────────
 
-interface InventoryCardProps {
+const NumpadModal: React.FC<{
+  visible: boolean;
+  currentQty: number;
+  itemName: string;
+  onConfirm: (qty: number) => void;
+  onClose: () => void;
+}> = ({ visible, currentQty, itemName, onConfirm, onClose }) => {
+  const [input, setInput] = React.useState('');
+
+  React.useEffect(() => {
+    if (visible) setInput(String(currentQty));
+  }, [visible, currentQty]);
+
+  const press = (key: string) => {
+    if (key === '⌫') { setInput(p => p.slice(0, -1) || '0'); return; }
+    if (key === 'C') { setInput('0'); return; }
+    if (input === '0') { setInput(key); return; }
+    if (input.length >= 4) return;
+    setInput(p => p + key);
+  };
+
+  const handleConfirm = () => {
+    const val = parseInt(input, 10);
+    if (isNaN(val) || val < 0) return;
+    onConfirm(val);
+    onClose();
+  };
+
+  const keys = ['7','8','9','4','5','6','1','2','3','C','0','⌫'];
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity style={numpadStyles.backdrop} onPress={onClose} activeOpacity={1}>
+        <View style={numpadStyles.sheet} onStartShouldSetResponder={() => true}>
+          <Text style={numpadStyles.title} numberOfLines={1}>{itemName}</Text>
+          <Text style={numpadStyles.display}>{input || '0'}</Text>
+          <View style={numpadStyles.grid}>
+            {keys.map(k => (
+              <TouchableOpacity
+                key={k}
+                style={[numpadStyles.key, k === 'C' && numpadStyles.keyClear, k === '⌫' && numpadStyles.keyBack]}
+                onPress={() => press(k)}
+              >
+                <Text style={[numpadStyles.keyText, k === 'C' && numpadStyles.keyClearText]}>{k}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity style={numpadStyles.confirmBtn} onPress={handleConfirm}>
+            <Text style={numpadStyles.confirmBtnText}>Set Quantity</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+};
+
+const numpadStyles = StyleSheet.create({
+  backdrop:       { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  sheet:          { backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, paddingBottom: 40 },
+  title:          { fontSize: 13, fontWeight: '700', color: '#94a3b8', textAlign: 'center', marginBottom: 8 },
+  display:        { fontSize: 48, fontWeight: '900', color: '#0f172a', textAlign: 'center', marginBottom: 20 },
+  grid:           { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 16 },
+  key:            { width: '30%', aspectRatio: 1.6, backgroundColor: '#f8fafc', borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#f1f5f9' },
+  keyClear:       { backgroundColor: '#fff1f2', borderColor: '#fecdd3' },
+  keyBack:        { backgroundColor: '#f8fafc' },
+  keyText:        { fontSize: 20, fontWeight: '700', color: '#0f172a' },
+  keyClearText:   { color: '#e11d48' },
+  confirmBtn:     { backgroundColor: '#0f172a', borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
+  confirmBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+});
+
+// ─── Inventory Card (grid tile) ──────────────────────────────────────────────
+
+const InventoryCard: React.FC<{
   item: InventorySummary;
   localQty: number;
   onEdit: () => void;
   onAdjust: (delta: number) => void;
   onViewPhoto: (uri: string) => void;
-  onTapQty: () => void;
+  onNumpad: () => void;
   isViewer: boolean;
-  pendingDelta: number | null;       // null = idle, +1/-1 = waiting for confirmation
-  onPendingChange: (delta: number) => void;
-  onPendingConfirm: () => void;
-  onPendingCancel: () => void;
-}
+}> = ({ item, localQty, onEdit, onAdjust, onViewPhoto, onNumpad, isViewer }) => (
+  <View style={cardStyles.card}>
+    {/* Photo — tap opens full-screen viewer. Blank if no image_url */}
+    <Pressable
+      onPress={() => item.image_url ? onViewPhoto(item.image_url) : undefined}
+      android_ripple={item.image_url ? { color: '#e2e8f0', borderless: false } : undefined}
+    >
+      {item.image_url ? (
+        <Image
+          source={{ uri: item.image_url }}
+          style={cardStyles.image}
+          resizeMode="cover"
+        />
+      ) : (
+        <View style={[cardStyles.image, cardStyles.imagePlaceholder]}>
+          <Text style={cardStyles.imagePlaceholderIcon}>📷</Text>
+        </View>
+      )}
+    </Pressable>
 
-const InventoryCard: React.FC<InventoryCardProps> = ({
-  item, localQty, onEdit, onAdjust, onViewPhoto, onTapQty,
-  isViewer, pendingDelta, onPendingChange, onPendingConfirm, onPendingCancel,
-}) => {
-  const previewQty = pendingDelta !== null ? Math.max(0, localQty + pendingDelta) : null;
+    {/* Name + barcode — tap opens item detail */}
+    <Pressable
+      onPress={isViewer ? undefined : onEdit}
+      style={cardStyles.info}
+      android_ripple={isViewer ? undefined : { color: '#f1f5f9', borderless: true }}
+    >
+      <Text style={cardStyles.name} numberOfLines={2}>{item.name || item.barcode}</Text>
+      <Text style={cardStyles.barcode} numberOfLines={1}>{item.barcode}</Text>
+    </Pressable>
 
-  return (
-    <View style={cardStyles.card}>
-      {/* Photo + category badge */}
-      <Pressable
-        onPress={() => item.image_url ? onViewPhoto(item.image_url) : undefined}
-        android_ripple={item.image_url ? { color: '#e2e8f0', borderless: false } : undefined}
-        style={{ position: 'relative' }}
+    {/* Quantity control row */}
+    <View style={cardStyles.qtyRow}>
+      <TouchableOpacity
+        style={[cardStyles.qtyBtn, cardStyles.qtyBtnMinus, isViewer && { opacity: 0.3 }]}
+        onPress={() => {
+          if (isViewer || localQty <= 0) return;
+          Alert.alert(t.removeOne, t.removeOneOf(item.name || item.barcode), [
+            { text: t.cancel, style: 'cancel' },
+            { text: t.confirm, onPress: () => onAdjust(-1) },
+          ]);
+        }}
+        disabled={isViewer}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
       >
-        {item.image_url ? (
-          <Image source={{ uri: item.image_url }} style={cardStyles.image} resizeMode="cover" />
-        ) : (
-          <View style={[cardStyles.image, cardStyles.imagePlaceholder]}>
-            <Text style={cardStyles.imagePlaceholderIcon}>📷</Text>
-          </View>
-        )}
-        {!!item.category && (
-          <View style={cardStyles.categoryBadge}>
-            <Text style={cardStyles.categoryBadgeText} numberOfLines={1}>{item.category}</Text>
-          </View>
-        )}
-      </Pressable>
-
-      {/* Name only */}
-      <Pressable
-        onPress={isViewer ? undefined : onEdit}
-        style={cardStyles.info}
-        android_ripple={isViewer ? undefined : { color: '#f1f5f9', borderless: true }}
+        <Text style={[cardStyles.qtyBtnText, cardStyles.qtyBtnTextMinus]}>－</Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={isViewer ? undefined : onNumpad} disabled={isViewer}>
+        <Text style={[cardStyles.qtyNum, !isViewer && { textDecorationLine: 'underline', textDecorationStyle: 'dotted' }]}>{localQty}</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[cardStyles.qtyBtn, cardStyles.qtyBtnPlus, isViewer && { opacity: 0.3 }]}
+        onPress={() => {
+          if (isViewer) return;
+          Alert.alert(t.addOne, t.addOneOf(item.name || item.barcode), [
+            { text: t.cancel, style: 'cancel' },
+            { text: t.confirm, onPress: () => onAdjust(1) },
+          ]);
+        }}
+        disabled={isViewer}
+        hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
       >
-        <Text style={cardStyles.name} numberOfLines={2}>{item.name || item.barcode}</Text>
-      </Pressable>
-
-      {/* Quantity control row */}
-      <View style={cardStyles.qtyRow}>
-        {pendingDelta !== null ? (
-          // ── Pending confirmation state ──────────────────────────────────────
-          <>
-            {/* Cancel */}
-            <TouchableOpacity
-              style={[cardStyles.qtyBtn, cardStyles.qtyBtnCancel]}
-              onPress={onPendingCancel}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
-            >
-              <Text style={cardStyles.qtyBtnTextCancel}>✕</Text>
-            </TouchableOpacity>
-
-            {/* Preview qty with direction indicator */}
-            <View style={cardStyles.qtyPreviewBox}>
-              <Text style={[cardStyles.qtyNum, { color: pendingDelta > 0 ? '#059669' : '#e11d48' }]}>
-                {previewQty}
-              </Text>
-              <Text style={cardStyles.qtyDelta}>
-                {pendingDelta > 0 ? '▲' : '▼'}
-              </Text>
-            </View>
-
-            {/* Confirm */}
-            <TouchableOpacity
-              style={[cardStyles.qtyBtn, cardStyles.qtyBtnConfirm]}
-              onPress={onPendingConfirm}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
-            >
-              <Text style={cardStyles.qtyBtnTextConfirm}>✓</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
-          // ── Normal state ────────────────────────────────────────────────────
-          <>
-            <TouchableOpacity
-              style={[cardStyles.qtyBtn, cardStyles.qtyBtnMinus, isViewer && { opacity: 0.3 }]}
-              onPress={() => !isViewer && onPendingChange(-1)}
-              disabled={isViewer}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
-            >
-              <Text style={[cardStyles.qtyBtnText, cardStyles.qtyBtnTextMinus]}>－</Text>
-            </TouchableOpacity>
-
-            {/* Tap qty → numpad */}
-            <TouchableOpacity
-              onPress={isViewer ? undefined : onTapQty}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-              disabled={isViewer}
-            >
-              <Text style={[cardStyles.qtyNum, !isViewer && cardStyles.qtyNumTappable]}>
-                {localQty}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[cardStyles.qtyBtn, cardStyles.qtyBtnPlus, isViewer && { opacity: 0.3 }]}
-              onPress={() => !isViewer && onPendingChange(1)}
-              disabled={isViewer}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
-            >
-              <Text style={[cardStyles.qtyBtnText, cardStyles.qtyBtnTextPlus]}>＋</Text>
-            </TouchableOpacity>
-          </>
-        )}
-      </View>
+        <Text style={[cardStyles.qtyBtnText, cardStyles.qtyBtnTextPlus]}>＋</Text>
+      </TouchableOpacity>
     </View>
-  );
-};
+  </View>
+);
 
-// ─── Scan Bar ─────────────────────────────────────────────────────────────────
+// ─── Scan Bar (permanent bottom bar) ─────────────────────────────────────────
 
-const ScanBar: React.FC<{ onSelect: (mode: ScanMode) => void }> = ({ onSelect }) => (
+const ScanBar: React.FC<{
+  onSelect: (mode: ScanMode) => void;
+}> = ({ onSelect }) => (
   <View style={sheetStyles.bar}>
     {([
-      { mode: 'IN',     label: 'SCAN IN',  icon: '⬇️', color: '#ecfdf5', border: '#a7f3d0', textColor: '#059669' },
-      { mode: 'LOOKUP', label: 'LOOKUP',   icon: '🔍', color: '#eff6ff', border: '#bfdbfe', textColor: '#2563eb' },
-      { mode: 'OUT',    label: 'SCAN OUT', icon: '⬆️', color: '#fff1f2', border: '#fecdd3', textColor: '#e11d48' },
+      { mode: 'IN',     label: t.scanIn,  icon: '⬇️', color: '#ecfdf5', border: '#a7f3d0', textColor: '#059669' },
+      { mode: t.lookup, label: t.lookup,   icon: '🔍', color: '#eff6ff', border: '#bfdbfe', textColor: '#2563eb' },
+      { mode: 'OUT',    label: t.scanOut, icon: '⬆️', color: '#fff1f2', border: '#fecdd3', textColor: '#e11d48' },
     ] as const).map(({ mode, label, icon, color, border, textColor }) => (
       <TouchableOpacity
         key={mode}
@@ -359,52 +300,66 @@ const ScanBar: React.FC<{ onSelect: (mode: ScanMode) => void }> = ({ onSelect })
 // ─── Dashboard Screen ─────────────────────────────────────────────────────────
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
-  user, userType, onOpenProfile, onOpenScanner, onEditItem, onOpenHistory,
-  workspaceRole, workspaceOwnerId, availableWorkspaces = [], onSwitchWorkspace,
+  user, userType, onOpenProfile, onOpenScanner, onEditItem, onOpenHistory, workspaceRole,
   summary, loading, onRefresh, registerBackHandler,
 }) => {
   const [searchQuery, setSearchQuery]       = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
   const [drawerOpen, setDrawerOpen]         = useState(false);
   const [photoUri, setPhotoUri]             = useState<string | null>(null);
-
-  // Numpad modal state
-  const [numpadItem, setNumpadItem] = useState<InventorySummary | null>(null);
-
-  // Pending +/- confirmation: barcode → delta (+1 or -1)
-  const [pendingMap, setPendingMap] = useState<Record<string, number>>({});
+  const [numpadItem, setNumpadItem]         = useState<InventorySummary | null>(null);
 
   const isViewer = workspaceRole === 'viewer';
 
+  // Register back-press handler with App.tsx so hardware back can reset category filter
   useEffect(() => {
     if (!registerBackHandler) return;
     registerBackHandler(() => {
-      // Cancel any pending confirmations first
-      if (Object.keys(pendingMap).length > 0) {
-        setPendingMap({});
-        return true;
-      }
       if (activeCategory !== 'all') {
         setActiveCategory('all');
-        return true;
+        return true; // consumed
       }
-      return false;
+      return false; // not consumed — let App.tsx handle (exit confirmation)
     });
-  }, [registerBackHandler, activeCategory, pendingMap]);
+  }, [registerBackHandler, activeCategory]);
 
+
+  // Optimistic quantity overrides: barcode → expected qty after local changes
+  // Cleared only when the summary prop from the server catches up to our expected value
   const [qtyOverrides, setQtyOverrides] = useState<Record<string, number>>({});
-  const [recentOrder, setRecentOrder]   = useState<string[]>([]);
+
+  // Tracks recency order — persisted to AsyncStorage so it survives app restarts
+  const RECENT_KEY = `recentOrder_${user.id}`;
+  const [recentOrder, setRecentOrder] = useState<string[]>([]);
+
+  // Load persisted order on mount
+  useEffect(() => {
+    AsyncStorage.getItem(RECENT_KEY).then(val => {
+      if (val) setRecentOrder(JSON.parse(val));
+    }).catch(() => {});
+  }, [RECENT_KEY]);
 
   const bumpToTop = useCallback((barcode: string) => {
-    setRecentOrder(prev => [barcode, ...prev.filter(b => b !== barcode)]);
-  }, []);
+    setRecentOrder(prev => {
+      const next = [barcode, ...prev.filter(b => b !== barcode)];
+      // Keep only last 100 to avoid unbounded growth
+      const trimmed = next.slice(0, 100);
+      AsyncStorage.setItem(RECENT_KEY, JSON.stringify(trimmed)).catch(() => {});
+      return trimmed;
+    });
+  }, [RECENT_KEY]);
 
   // ─── Undo toast ───────────────────────────────────────────────────────────
-  const [undoAction, setUndoAction]   = useState<{ barcode: string; itemName: string; delta: number } | null>(null);
+  const [undoAction, setUndoAction] = useState<{
+    barcode: string;
+    itemName: string;
+    delta: number;
+  } | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
   const toastTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const toastAnim    = useRef(new Animated.Value(0)).current;
+  const toastAnim = useRef(new Animated.Value(0)).current;
 
+  // When summary changes from Realtime, bump the most recently updated barcode to top
   const prevSummaryRef = useRef<InventorySummary[]>([]);
   useEffect(() => {
     const prev = prevSummaryRef.current;
@@ -412,13 +367,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       const old = prev.find(p => p.barcode === item.barcode);
       if (!old || old.quantity !== item.quantity) {
         bumpToTop(item.barcode);
-        break;
+        break; // only bump one per Realtime event
       }
     }
     prevSummaryRef.current = summary;
   }, [summary]);
 
-  useEffect(() => {
+  // When summary updates from server, clear any override that has been satisfied
+  React.useEffect(() => {
     setQtyOverrides(prev => {
       const next = { ...prev };
       let changed = false;
@@ -433,101 +389,59 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     });
   }, [summary, user.id]);
 
-  // ─── Core adjust (called after confirmation) ──────────────────────────────
   const adjustQuantity = useCallback(async (barcode: string, delta: number) => {
     const item = summary.find(i => i.barcode === barcode && i.owner_id === user.id);
     if (!item) return;
 
     const currentQty = qtyOverrides[barcode] ?? item.quantity;
     if (delta < 0 && currentQty <= 0) {
-      Alert.alert('Out of Stock', 'Cannot reduce quantity below 0.');
+      Alert.alert(t.outOfStockAlert, t.cannotReduceBelow);
       return;
     }
 
+    // Hard floor at 0 — never allow negative quantity
     const expectedQty = Math.max(0, currentQty + delta);
-    if (expectedQty === currentQty) return;
+    if (expectedQty === currentQty) return; // nothing changed (already at 0)
 
+    // Optimistic update — instant UI response
     setQtyOverrides(prev => ({ ...prev, [barcode]: expectedQty }));
 
     try {
-      const { error } = await supabase.from('inventory_logs').insert({
+      const { data, error } = await supabase.from('inventory_logs').insert({
         barcode,
         action_type: delta > 0 ? 'IN' : 'OUT',
         device_id:   'MOBILE_DASHBOARD',
         owner_id:    user.id,
         quantity:    delta,
-      });
+      }).select('log_id').single();
       if (error) throw error;
 
       showToast(barcode, item.name || barcode, delta);
       bumpToTop(barcode);
     } catch (err: any) {
+      // Rollback on failure
       setQtyOverrides(prev => {
         const next = { ...prev };
         delete next[barcode];
         return next;
       });
-      Alert.alert('Error', err.message);
+      Alert.alert('Error', t.errorUpdateQty);
     }
   }, [summary, user.id, qtyOverrides]);
 
-  // ─── Set quantity directly (from numpad) ─────────────────────────────────
-  const setQuantityDirect = useCallback(async (barcode: string, newQty: number) => {
-    const item = summary.find(i => i.barcode === barcode && i.owner_id === user.id);
-    if (!item) return;
-
-    const currentQty = qtyOverrides[barcode] ?? item.quantity;
-    const delta = newQty - currentQty;
-    if (delta === 0) return; // nothing changed
-
-    await adjustQuantity(barcode, delta);
-  }, [summary, user.id, qtyOverrides, adjustQuantity]);
-
-  // ─── Pending +/- handlers ─────────────────────────────────────────────────
-  const handlePendingChange = useCallback((barcode: string, delta: number) => {
-    // If already pending for same direction, stack it; opposite direction cancels
-    setPendingMap(prev => {
-      const existing = prev[barcode];
-      if (existing !== undefined && existing !== delta) {
-        // Opposite direction → cancel
-        const next = { ...prev };
-        delete next[barcode];
-        return next;
-      }
-      return { ...prev, [barcode]: delta };
-    });
-  }, []);
-
-  const handlePendingConfirm = useCallback((barcode: string) => {
-    const delta = pendingMap[barcode];
-    if (delta === undefined) return;
-    setPendingMap(prev => {
-      const next = { ...prev };
-      delete next[barcode];
-      return next;
-    });
-    adjustQuantity(barcode, delta);
-  }, [pendingMap, adjustQuantity]);
-
-  const handlePendingCancel = useCallback((barcode: string) => {
-    setPendingMap(prev => {
-      const next = { ...prev };
-      delete next[barcode];
-      return next;
-    });
-  }, []);
-
-  // ─── Toast helpers ────────────────────────────────────────────────────────
   const hideToast = useCallback(() => {
-    Animated.timing(toastAnim, { toValue: 0, duration: 200, useNativeDriver: true })
-      .start(() => setToastVisible(false));
+    Animated.timing(toastAnim, {
+      toValue: 0, duration: 200, useNativeDriver: true,
+    }).start(() => setToastVisible(false));
   }, [toastAnim]);
 
   const showToast = useCallback((barcode: string, itemName: string, delta: number) => {
     if (toastTimeout.current) clearTimeout(toastTimeout.current);
     setUndoAction({ barcode, itemName, delta });
     setToastVisible(true);
-    Animated.spring(toastAnim, { toValue: 1, useNativeDriver: true, tension: 80, friction: 10 }).start();
+    Animated.spring(toastAnim, {
+      toValue: 1, useNativeDriver: true, tension: 80, friction: 10,
+    }).start();
     toastTimeout.current = setTimeout(() => hideToast(), 3500);
   }, [toastAnim, hideToast]);
 
@@ -535,11 +449,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     if (!undoAction) return;
     if (toastTimeout.current) clearTimeout(toastTimeout.current);
 
+    // Use actual item quantity from summary as the base, not the override
     const currentItem = summary.find(i => i.barcode === undoAction.barcode);
     const currentQty  = qtyOverrides[undoAction.barcode] ?? currentItem?.quantity ?? 0;
     const restoredQty = currentQty - undoAction.delta;
 
-    setQtyOverrides(prev => ({ ...prev, [undoAction.barcode]: restoredQty }));
+    setQtyOverrides(prev => ({
+      ...prev,
+      [undoAction.barcode]: restoredQty,
+    }));
 
     try {
       await supabase.from('inventory_logs').insert({
@@ -550,15 +468,19 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         quantity:    -undoAction.delta,
       });
     } catch (err: any) {
-      const currentQtyNow = qtyOverrides[undoAction.barcode] ?? 0;
-      setQtyOverrides(prev => ({ ...prev, [undoAction.barcode]: currentQtyNow }));
-      Alert.alert('Undo failed', err.message);
+      // Rollback the optimistic undo
+      setQtyOverrides(prev => ({
+        ...prev,
+        [undoAction.barcode]: currentQty,
+      }));
+      Alert.alert('Undo Failed', t.errorUndo);
     }
     hideToast();
   }, [undoAction, hideToast, user, summary, qtyOverrides]);
 
   const handleShare = async (item: InventorySummary) => {
     try {
+      // Generate or fetch existing share token from Supabase
       const { data: existing } = await supabase
         .from('shared_items')
         .select('token')
@@ -584,19 +506,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         message: `Check out ${item.name || 'this product'} — ${shareUrl}\n\nBuild your own Mini Market with OmniScan Pro 🛒`,
       });
     } catch (err: any) {
-      Alert.alert('Share failed', err.message);
+      Alert.alert('Share Unavailable', t.errorShare);
     }
   };
 
-  // ─── Derived data ─────────────────────────────────────────────────────────
-  // When viewing a shared workspace, filter by that owner's ID
-  const activeOwnerId = workspaceOwnerId || user.id;
-
-  const activeItems = useMemo(() => {
-    const base = summary
-      .filter(i => i.owner_id === activeOwnerId)
-      .filter(i => (qtyOverrides[i.barcode] ?? i.quantity) > 0);
-
+  // All items (including zero qty) — used for category filtering
+  const allItems = useMemo(() => {
+    const base = summary.filter(i => i.owner_id === user.id);
     return [...base].sort((a, b) => {
       const ai = recentOrder.indexOf(a.barcode);
       const bi = recentOrder.indexOf(b.barcode);
@@ -605,40 +521,49 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       if (bi !== -1) return 1;
       return 0;
     });
-  }, [summary, activeOwnerId, qtyOverrides, recentOrder]);
+  }, [summary, user.id, recentOrder]);
 
-  const zeroItems = useMemo(() =>
-    summary
-      .filter(i => i.owner_id === activeOwnerId)
-      .filter(i => (qtyOverrides[i.barcode] ?? i.quantity) === 0),
-    [summary, activeOwnerId, qtyOverrides]
-  );
+  // Active items (qty > 0) — used for "All" category and unit counts
+  const activeItems = useMemo(() => {
+    return allItems.filter(i => (qtyOverrides[i.barcode] ?? i.quantity) > 0);
+  }, [allItems, qtyOverrides]);
 
+  // Zero qty items — used for out-of-stock category
+  const zeroItems = useMemo(() => {
+    return allItems.filter(i => (qtyOverrides[i.barcode] ?? i.quantity) === 0);
+  }, [allItems, qtyOverrides]);
+
+  // Normalize a category string: trim whitespace + lowercase + singularize common suffixes
+  // so "Snacks", "snack", "snacks", "SNACK" all map to the same bucket
   const normalizeCategory = useCallback((raw: string): string => {
     const s = raw.trim().toLowerCase();
+    // Remove trailing 's' for simple plurals (snacks→snack, sources→source)
+    // but protect words that naturally end in 's' like 'sauce', 'juice'
     if (s.endsWith('s') && s.length > 3 && !s.endsWith('ss') && !s.endsWith('ce') && !s.endsWith('se')) {
       return s.slice(0, -1);
     }
     return s;
   }, []);
 
+  // Title-case for display
   const titleCase = useCallback((s: string): string =>
-    s.charAt(0).toUpperCase() + s.slice(1), []);
+    s.charAt(0).toUpperCase() + s.slice(1)
+  , []);
 
   const categories = useMemo(() => {
+    // Group items by normalized category key
     const catMap = new Map<string, { displayName: string; count: number }>();
-    for (const item of activeItems) {
+    for (const item of allItems) {
       if (!item.category) continue;
       const key = normalizeCategory(item.category);
-      const qty = qtyOverrides[item.barcode] ?? item.quantity;
       if (catMap.has(key)) {
-        catMap.get(key)!.count += qty;
+        catMap.get(key)!.count += 1; // count items, not qty
       } else {
-        catMap.set(key, { displayName: titleCase(key), count: qty });
+        catMap.set(key, { displayName: titleCase(key), count: 1 });
       }
     }
     const cats = [
-      { id: 'all', name: 'All', count: activeItems.reduce((a, i) => a + (qtyOverrides[i.barcode] ?? i.quantity), 0) },
+      { id: 'all', name: t.allCategories, count: allItems.length },
       ...[...catMap.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, val]) => ({
         id: key,
         name: val.displayName,
@@ -646,31 +571,41 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       })),
     ];
     if (zeroItems.length > 0) {
-      cats.push({ id: 'out-of-stock', name: '📦 Out of Stock', count: zeroItems.length });
+      cats.push({ id: 'out-of-stock', name: t.outOfStock, count: zeroItems.length });
     }
     return cats;
   }, [activeItems, qtyOverrides, zeroItems, normalizeCategory, titleCase]);
 
   const filtered = useMemo(() => {
+    // Out of Stock category — only zero qty items
     if (activeCategory === 'out-of-stock') {
       return zeroItems.filter(item =>
         item.barcode.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (item.name || '').toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
-    return activeItems.filter(item => {
+    // "All" category — show every item including zero qty
+    if (activeCategory === 'all') {
+      return allItems.filter(item =>
+        item.barcode.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (item.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+    // Specific category — show ALL items in that category (including zero qty)
+    return allItems.filter(item => {
       const matchSearch =
         item.barcode.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (item.name || '').toLowerCase().includes(searchQuery.toLowerCase());
-      const matchCat =
-        activeCategory === 'all' ||
-        normalizeCategory(item.category || '') === activeCategory;
+      const matchCat = normalizeCategory(item.category || '') === activeCategory;
       return matchSearch && matchCat;
     });
-  }, [activeItems, zeroItems, searchQuery, activeCategory]);
+  }, [allItems, activeItems, zeroItems, searchQuery, activeCategory, normalizeCategory]);
 
   const userName   = user.user_metadata?.full_name || user.email.split('@')[0];
   const avatarSeed = user.user_metadata?.avatar_seed || user.email;
+  const avatarUri  = user.user_metadata?.avatar_url
+    ? user.user_metadata.avatar_url
+    : `https://api.dicebear.com/7.x/avataaars/svg?seed=${avatarSeed}`;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -678,7 +613,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       <View style={styles.header}>
         <TouchableOpacity style={styles.avatarRow} onPress={onOpenProfile}>
           <Image
-            source={{ uri: `https://api.dicebear.com/7.x/avataaars/svg?seed=${avatarSeed}` }}
+            source={{ uri: avatarUri }}
             style={styles.avatar}
           />
           <View>
@@ -697,7 +632,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
             style={styles.searchInput}
-            placeholder="Search items or barcodes…"
+            placeholder={t.searchPlaceholder}
             placeholderTextColor="#94a3b8"
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -711,38 +646,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </View>
       </View>
 
-      {/* Ad Banner */}
+      {/* Ad Banner — shown to free users only */}
       {shouldShowAds(userType) && <AdBanner />}
-
-      {/* Workspace switcher banner — shown when user has access to shared workspaces */}
-      {availableWorkspaces.length > 1 && (
-        <View style={styles.workspaceBanner}>
-          <Text style={styles.workspaceBannerLabel}>VIEWING</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.workspacePills}>
-            {availableWorkspaces.map((ws) => {
-              const isActive = ws.isOwn ? !workspaceOwnerId : workspaceOwnerId === ws.ownerId;
-              return (
-                <TouchableOpacity
-                  key={ws.ownerId}
-                  style={[styles.workspacePill, isActive && styles.workspacePillActive]}
-                  onPress={() => onSwitchWorkspace?.(ws)}
-                >
-                  <Text style={[styles.workspacePillText, isActive && styles.workspacePillTextActive]}>
-                    {ws.isOwn ? '👤 My Inventory' : `👥 ${ws.ownerEmail.split('@')[0]}`}
-                  </Text>
-                  {!ws.isOwn && (
-                    <View style={[styles.roleBadge, isActive && styles.roleBadgeActive]}>
-                      <Text style={[styles.roleBadgeText, isActive && styles.roleBadgeTextActive]}>
-                        {ws.role.toUpperCase()}
-                      </Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-      )}
 
       {/* Title + category filter */}
       <View style={styles.titleRow}>
@@ -750,9 +655,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <Text style={styles.menuIcon}>☰</Text>
         </TouchableOpacity>
         <Text style={styles.categoryTitle}>
-          {categories.find(c => c.id === activeCategory)?.name ?? 'All'} ·{' '}
-          {categories.find(c => c.id === activeCategory)?.count ?? 0}{' '}
-          {activeCategory === 'out-of-stock' ? 'items' : 'units'}
+          {categories.find(c => c.id === activeCategory)?.name ?? t.allCategories} ·{' '}
+          {categories.find(c => c.id === activeCategory)?.count ?? 0} items
         </Text>
       </View>
 
@@ -770,7 +674,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={onRefresh} tintColor="#10b981" />}
           renderItem={({ item }) =>
-            activeCategory === 'out-of-stock' ? (
+            ((qtyOverrides[item.barcode] ?? item.quantity) === 0) ? (
               <View style={styles.zeroCard}>
                 {item.image_url ? (
                   <Image source={{ uri: item.image_url }} style={styles.zeroCardImage} resizeMode="cover" />
@@ -799,24 +703,21 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 isViewer={isViewer}
                 onAdjust={(delta) => adjustQuantity(item.barcode, delta)}
                 onViewPhoto={(uri) => setPhotoUri(uri)}
-                onTapQty={() => setNumpadItem(item)}
-                pendingDelta={pendingMap[item.barcode] ?? null}
-                onPendingChange={(delta) => handlePendingChange(item.barcode, delta)}
-                onPendingConfirm={() => handlePendingConfirm(item.barcode)}
-                onPendingCancel={() => handlePendingCancel(item.barcode)}
+                onNumpad={() => setNumpadItem(item)}
               />
             )
           }
           ListEmptyComponent={
             <View style={styles.emptyBox}>
               <Text style={styles.emptyIcon}>{activeCategory === 'out-of-stock' ? '✅' : '📦'}</Text>
-              <Text style={styles.emptyText}>{activeCategory === 'out-of-stock' ? 'ALL IN STOCK' : 'NO ITEMS FOUND'}</Text>
+              <Text style={styles.emptyText}>{activeCategory === 'out-of-stock' ? t.allInStock : t.noItemsFound}</Text>
             </View>
           }
+
         />
       )}
 
-      {/* Scan bar + undo toast */}
+      {/* Permanent scan bar + toast container */}
       <View style={{ position: 'relative' }}>
         {toastVisible && undoAction && (
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#1e293b', marginHorizontal: 16, marginBottom: 8, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, elevation: 8 }}>
@@ -831,22 +732,24 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         {!isViewer && <ScanBar onSelect={onOpenScanner} />}
       </View>
 
-      {/* Photo viewer */}
-      <PhotoViewer uri={photoUri} onClose={() => setPhotoUri(null)} />
 
-      {/* Numpad modal */}
+
+      {/* Photo viewer */}
       <NumpadModal
         visible={!!numpadItem}
-        initialQty={numpadItem ? (qtyOverrides[numpadItem.barcode] ?? numpadItem.quantity) : 0}
+        currentQty={numpadItem ? (qtyOverrides[numpadItem.barcode] ?? numpadItem.quantity) : 0}
         itemName={numpadItem?.name || numpadItem?.barcode || ''}
-        onConfirm={(newQty) => {
-          if (numpadItem) setQuantityDirect(numpadItem.barcode, newQty);
-          setNumpadItem(null);
+        onConfirm={(qty) => {
+          if (!numpadItem) return;
+          const current = qtyOverrides[numpadItem.barcode] ?? numpadItem.quantity;
+          const delta = qty - current;
+          if (delta !== 0) adjustQuantity(numpadItem.barcode, delta);
         }}
         onClose={() => setNumpadItem(null)}
       />
+      <PhotoViewer uri={photoUri} onClose={() => setPhotoUri(null)} />
 
-      {/* Category Drawer */}
+      {/* Modals */}
       <CategoryDrawer
         visible={drawerOpen}
         categories={categories}
@@ -855,6 +758,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         onOpenHistory={() => { onOpenHistory(); setDrawerOpen(false); }}
         onClose={() => setDrawerOpen(false)}
       />
+
     </SafeAreaView>
   );
 };
@@ -862,7 +766,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { position: 'relative', flex: 1, backgroundColor: '#fff' },
+  container: {
+    position: 'relative', flex: 1, backgroundColor: '#fff' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#f1f5f9' },
@@ -887,75 +792,63 @@ const styles = StyleSheet.create({
   zeroInfo: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 4 },
   zeroName: { fontSize: 12, fontWeight: '800', color: '#94a3b8', marginBottom: 2 },
   zeroBarcode: { fontSize: 9, fontWeight: '500', color: '#cbd5e1', fontVariant: ['tabular-nums'] },
+  zeroCategory: { fontSize: 9, fontWeight: '700', color: '#cbd5e1', marginTop: 2 },
   reAddBtn: { margin: 8, backgroundColor: '#ecfdf5', borderRadius: 10, paddingVertical: 8, alignItems: 'center', borderWidth: 1, borderColor: '#a7f3d0' },
   reAddBtnText: { fontSize: 11, fontWeight: '800', color: '#059669' },
   emptyBox: { alignItems: 'center', paddingVertical: 60 },
   emptyIcon: { fontSize: 48, marginBottom: 12 },
   emptyText: { fontSize: 13, fontWeight: '700', color: '#94a3b8', letterSpacing: 1 },
-  // Workspace switcher
-  workspaceBanner:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', gap: 10 },
-  workspaceBannerLabel:  { fontSize: 9, fontWeight: '700', color: '#94a3b8', letterSpacing: 1.5 },
-  workspacePills:        { flexDirection: 'row', flexGrow: 0 },
-  workspacePill:         { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', marginRight: 8 },
-  workspacePillActive:   { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' },
-  workspacePillText:     { fontSize: 12, fontWeight: '700', color: '#64748b' },
-  workspacePillTextActive: { color: '#059669' },
-  roleBadge:             { backgroundColor: '#e2e8f0', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
-  roleBadgeActive:       { backgroundColor: '#d1fae5' },
-  roleBadgeText:         { fontSize: 8, fontWeight: '800', color: '#94a3b8', letterSpacing: 0.5 },
-  roleBadgeTextActive:   { color: '#059669' },
+
 });
 
 const cardStyles = StyleSheet.create({
-  card: { flex: 1, backgroundColor: '#fff', borderRadius: 20, borderWidth: 1, borderColor: '#f1f5f9', margin: 6, shadowColor: '#64748b', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2, overflow: 'hidden' },
-  image: { width: '100%', height: 155, backgroundColor: '#f8fafc' },
+  // Vertical grid tile
+  card: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    margin: 6,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+    overflow: 'hidden',
+  },
+  image: { width: '100%', height: 130, backgroundColor: '#f8fafc' },
   imagePlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc' },
   imagePlaceholderIcon: { fontSize: 36, opacity: 0.3 },
-  categoryBadge: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(15,23,42,0.55)', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, maxWidth: '70%' },
-  categoryBadgeText: { fontSize: 9, fontWeight: '700', color: '#fff', letterSpacing: 0.5 },
   info: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 4 },
   name: { fontSize: 12, fontWeight: '800', color: '#0f172a', marginBottom: 2 },
-  qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#f8fafc' },
-  qtyBtn: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  barcode: { fontSize: 9, fontWeight: '500', color: '#94a3b8', fontVariant: ['tabular-nums'] },
+  // Quantity control row at bottom of card
+  qtyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f8fafc',
+  },
+  qtyBtn: {
+    width: 30, height: 30, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
   qtyBtnPlus:      { backgroundColor: '#ecfdf5' },
   qtyBtnMinus:     { backgroundColor: '#fff1f2' },
-  qtyBtnConfirm:   { backgroundColor: '#ecfdf5', width: 34, height: 34, borderRadius: 11 },
-  qtyBtnCancel:    { backgroundColor: '#fff1f2', width: 34, height: 34, borderRadius: 11 },
   qtyBtnText:      { fontSize: 16, fontWeight: '700' },
   qtyBtnTextPlus:  { color: '#10b981' },
   qtyBtnTextMinus: { color: '#e11d48' },
-  qtyBtnTextConfirm: { fontSize: 15, fontWeight: '900', color: '#059669' },
-  qtyBtnTextCancel:  { fontSize: 13, fontWeight: '900', color: '#e11d48' },
   qtyNum:          { fontSize: 16, fontWeight: '900', color: '#0f172a' },
-  qtyNumTappable:  { textDecorationLine: 'underline', textDecorationStyle: 'dotted', textDecorationColor: '#94a3b8' },
-  qtyPreviewBox:   { alignItems: 'center', flexDirection: 'row', gap: 3 },
-  qtyDelta:        { fontSize: 9, fontWeight: '700', color: '#94a3b8' },
-  // unused stubs
+  // unused stubs kept to avoid TS errors
   qtyBox: { alignItems: 'center' },
   category: { fontSize: 10, fontWeight: '700', color: '#10b981' },
   qtyLabel: { fontSize: 8, color: '#94a3b8' },
   shareBtnText: { fontSize: 10, color: '#0284c7' },
   _shareBtn_unused: {},
-});
-
-const numpadStyles = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 24, paddingBottom: 36, paddingTop: 16 },
-  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: '#e2e8f0', alignSelf: 'center', marginBottom: 20 },
-  itemName: { fontSize: 15, fontWeight: '800', color: '#0f172a', textAlign: 'center', marginBottom: 4 },
-  label: { fontSize: 10, fontWeight: '700', color: '#94a3b8', letterSpacing: 2, textAlign: 'center', marginBottom: 16 },
-  display: { backgroundColor: '#f8fafc', borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', paddingVertical: 18, alignItems: 'center', marginBottom: 20 },
-  displayText: { fontSize: 40, fontWeight: '900', color: '#0f172a', letterSpacing: 2, fontVariant: ['tabular-nums'] },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
-  key: { width: '30%', aspectRatio: 1.6, backgroundColor: '#f8fafc', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
-  keyBackspace: { backgroundColor: '#fff1f2', borderColor: '#fecdd3' },
-  keyText: { fontSize: 22, fontWeight: '700', color: '#0f172a' },
-  keyBackspaceText: { fontSize: 20, color: '#e11d48' },
-  actions: { flexDirection: 'row', gap: 12 },
-  cancelBtn: { flex: 1, paddingVertical: 16, borderRadius: 16, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center' },
-  cancelText: { fontSize: 14, fontWeight: '800', color: '#64748b' },
-  confirmBtn: { flex: 2, paddingVertical: 16, borderRadius: 16, backgroundColor: '#10b981', alignItems: 'center' },
-  confirmText: { fontSize: 14, fontWeight: '900', color: '#fff' },
 });
 
 const drawerStyles = StyleSheet.create({
@@ -975,18 +868,83 @@ const drawerStyles = StyleSheet.create({
 });
 
 const sheetStyles = StyleSheet.create({
-  bar: { flexDirection: 'row', backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingHorizontal: 12, paddingVertical: 10, paddingBottom: 24, gap: 10 },
-  actionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderRadius: 18, borderWidth: 1, gap: 6 },
+  bar: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    paddingBottom: 24,
+    gap: 10,
+  },
+  actionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 6,
+  },
   actionIconText: { fontSize: 16 },
   actionLabel: { fontSize: 10, fontWeight: '900', letterSpacing: 1 },
 });
 
 const adStyles = StyleSheet.create({
-  container: { position: 'relative', alignItems: 'center', paddingVertical: 6, backgroundColor: '#fafafa', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-  banner: { width: 320, height: 50, backgroundColor: '#f1f5f9', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', borderStyle: 'dashed', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  label: { fontSize: 9, fontWeight: '800', color: '#94a3b8', letterSpacing: 1.5, backgroundColor: '#e2e8f0', paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
-  placeholder: { fontSize: 12, fontWeight: '600', color: '#cbd5e1' },
-  toast: { backgroundColor: '#1e293b', marginHorizontal: 16, marginBottom: 8, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 8 },
+  container: {
+    position: 'relative',
+    alignItems: 'center',
+    paddingVertical: 6,
+    backgroundColor: '#fafafa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  banner: {
+    width: 320,
+    height: 50,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderStyle: 'dashed',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  label: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#94a3b8',
+    letterSpacing: 1.5,
+    backgroundColor: '#e2e8f0',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  placeholder: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#cbd5e1',
+  },
+  toast: {
+    backgroundColor: '#1e293b',
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 8,
+  },
   toastText:     { fontSize: 13, fontWeight: '700', color: '#fff', flex: 1, flexShrink: 1 },
   toastUndo:     { marginLeft: 16, paddingHorizontal: 14, paddingVertical: 6, backgroundColor: '#334155', borderRadius: 8 },
   toastUndoText: { fontSize: 12, fontWeight: '800', color: '#38bdf8' },

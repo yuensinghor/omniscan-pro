@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,10 +10,16 @@ import {
   Alert,
   Modal,
   BackHandler,
+  Linking,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { AppUser, UserTier } from '../types';
+import { SUPABASE_URL } from '@env';
+import { t, setLang, getLang, Lang } from '../i18n';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 
 interface ProfileScreenProps {
   user: AppUser;
@@ -136,11 +142,114 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onOpenHistory,
   onOpenFamilySharing,
 }) => {
-  const [showUpgrade, setShowUpgrade] = useState(false);
-  const [feedbackText, setFeedbackText] = useState('');
-  const [feedbackSent, setFeedbackSent] = useState(false);
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [showUpgrade, setShowUpgrade]           = useState(false);
+  const [showPhotoOptions, setShowPhotoOptions] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar]   = useState(false);
+  const [pendingAction, setPendingAction]       = useState<'gallery' | 'random' | null>(null);
+  const [feedbackText, setFeedbackText]         = useState('');
+  const [feedbackSent, setFeedbackSent]         = useState(false);
+  const [displayName, setDisplayName]           = useState(
+    user.user_metadata?.full_name || user.email.split('@')[0],
+  );
+  const [avatarSeed, setAvatarSeed]             = useState(
+    user.user_metadata?.avatar_seed || user.email,
+  );
+  // Dedicated state for real uploaded photo — separate from DiceBear seed
+  const [avatarUrl, setAvatarUrl]               = useState<string | null>(
+    user.user_metadata?.avatar_url
+      ? user.user_metadata.avatar_url.split('?')[0] + '?t=' + Date.now()
+      : null,
+  );
 
-  // Reset upgrade/feedback view whenever modal closes
+  const tier: UserTier = user.user_metadata?.tier || 'FREE';
+  const validUntil     = user.user_metadata?.valid_until;
+  const tierPlan       = TIER_PLANS.find(p => p.id === tier) || TIER_PLANS[0];
+
+  // ── Callbacks (defined before useEffects that reference them) ──────────────
+
+  const handleComingSoon = useCallback(() => {
+    Alert.alert(t.comingSoonTitle, t.comingSoonMsg, [{ text: 'OK' }]);
+  }, []);
+
+  const handleBlur = useCallback(async () => {
+    await supabase.auth.updateUser({
+      data: { full_name: displayName, avatar_seed: avatarSeed },
+    });
+  }, [displayName, avatarSeed]);
+
+  const handleRandomAvatar = useCallback(async () => {
+    const seed = Math.random().toString(36).slice(2, 9);
+    setAvatarSeed(seed);
+    setAvatarUrl(null);
+    await supabase.auth.updateUser({ data: { avatar_seed: seed, avatar_url: null } });
+  }, []);
+
+  const handlePickAvatar = useCallback(async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Permission denied', t.permissionDenied);
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.6,
+      });
+      if (result.canceled || !result.assets?.length) return;
+
+      setUploadingAvatar(true);
+      const uri  = result.assets[0].uri;
+      const path = `${user.id}/avatar.jpg`;
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) throw new Error('Not authenticated.');
+
+      const uploadUrl = `${SUPABASE_URL}/storage/v1/object/avatars/${path}`;
+      const uploadResult = await FileSystem.uploadAsync(uploadUrl, uri, {
+        httpMethod:  'PUT',
+        uploadType:  FileSystem.FileSystemUploadType.BINARY_CONTENT,
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type':  'image/jpeg',
+          'x-upsert':      'true',
+        },
+      });
+
+      if (uploadResult.status !== 200 && uploadResult.status !== 201) {
+        throw new Error(`Upload failed (${uploadResult.status}): ${uploadResult.body}`);
+      }
+
+      const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/avatars/${path}?t=${Date.now()}`;
+      await supabase.auth.updateUser({ data: { avatar_url: publicUrl } });
+      setAvatarUrl(publicUrl);
+    } catch (err: any) {
+      Alert.alert('Upload Failed', err?.message || t.uploadFailed);
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }, [user.id]);
+
+  const handleSignOut = useCallback(async () => {
+    Alert.alert(t.signOut, t.signOutConfirm, [
+      { text: t.cancel, style: 'cancel' },
+      {
+        text: t.signOut,
+        style: 'destructive',
+        onPress: async () => {
+          onClose();
+          await supabase.auth.signOut();
+        },
+      },
+    ]);
+  }, [onClose]);
+
+  // ── Effects ────────────────────────────────────────────────────────────────
+
+  // Reset feedback view when modal closes
   useEffect(() => {
     if (!visible) {
       setShowUpgrade(false);
@@ -149,57 +258,44 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     }
   }, [visible]);
 
-  // Hardware back: fully owned by ProfileScreen while modal is visible
+  // Re-sync avatar + displayName when user_metadata updates from App.tsx
+  // Strip old ?t= and attach a fresh one so React Native re-fetches the image
+  useEffect(() => {
+    const storedUrl = user.user_metadata?.avatar_url || null;
+    if (storedUrl) {
+      const base = storedUrl.split('?')[0];
+      setAvatarUrl(`${base}?t=${Date.now()}`);
+    } else {
+      setAvatarUrl(null);
+    }
+    setAvatarSeed(user.user_metadata?.avatar_seed || user.email);
+    setDisplayName(user.user_metadata?.full_name || user.email.split('@')[0]);
+  }, [user.user_metadata]);
+
+  // Fire pending photo action after bottom sheet has fully dismissed
+  // Solves Android modal stacking — ImagePicker must open after sheet is gone
+  useEffect(() => {
+    if (showPhotoOptions) return;
+    if (!pendingAction) return;
+    const action = pendingAction;
+    setPendingAction(null);
+    const timer = setTimeout(() => {
+      if (action === 'gallery') handlePickAvatar();
+      if (action === 'random')  handleRandomAvatar();
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [showPhotoOptions, pendingAction, handlePickAvatar, handleRandomAvatar]);
+
+  // Hardware back button
   useEffect(() => {
     if (!visible) return;
     const handler = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (showUpgrade) {
-        // Upgrade sub-view open → back to Account page
-        setShowUpgrade(false);
-        return true;
-      }
-      // Account page → close profile, return to main item list
+      if (showUpgrade) { setShowUpgrade(false); return true; }
       onClose();
       return true;
     });
     return () => handler.remove();
   }, [visible, showUpgrade, onClose]);
-  const [displayName, setDisplayName] = useState(
-    user.user_metadata?.full_name || user.email.split('@')[0],
-  );
-  const [avatarSeed, setAvatarSeed] = useState(
-    user.user_metadata?.avatar_seed || user.email,
-  );
-
-  const tier: UserTier      = user.user_metadata?.tier || 'FREE';
-  const validUntil          = user.user_metadata?.valid_until;
-  const tierPlan            = TIER_PLANS.find(p => p.id === tier) || TIER_PLANS[0];
-
-  const handleBlur = async () => {
-    await supabase.auth.updateUser({
-      data: { full_name: displayName, avatar_seed: avatarSeed },
-    });
-  };
-
-  const handleRandomAvatar = async () => {
-    const seed = Math.random().toString(36).slice(2, 9);
-    setAvatarSeed(seed);
-    await supabase.auth.updateUser({ data: { avatar_seed: seed } });
-  };
-
-  const handleSignOut = async () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: async () => {
-          onClose();
-          await supabase.auth.signOut();
-        },
-      },
-    ]);
-  };
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -222,11 +318,19 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               <View style={styles.avatarSection}>
                 <View style={styles.avatarWrap}>
                   <Image
-                    source={{ uri: `https://api.dicebear.com/7.x/avataaars/svg?seed=${avatarSeed}` }}
+                    source={{ uri: avatarUrl ?? `https://api.dicebear.com/7.x/avataaars/svg?seed=${avatarSeed}` }}
                     style={styles.avatar}
                   />
-                  <TouchableOpacity style={styles.avatarEditBtn} onPress={handleRandomAvatar}>
-                    <Text style={styles.avatarEditIcon}>🎲</Text>
+                  {uploadingAvatar && (
+                    <View style={styles.avatarUploading}>
+                      <ActivityIndicator color="#fff" size="small" />
+                    </View>
+                  )}
+                  <TouchableOpacity
+                    style={styles.avatarEditBtn}
+                    onPress={() => !uploadingAvatar && setShowPhotoOptions(true)}
+                  >
+                    <Text style={styles.avatarEditIcon}>{uploadingAvatar ? '⏳' : '✏️'}</Text>
                   </TouchableOpacity>
                 </View>
                 <Text style={styles.email}>{user.email}</Text>
@@ -260,7 +364,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <View style={styles.actionGrid}>
                   <TouchableOpacity
                     style={styles.actionCard}
-                    onPress={() => { onClose(); onAddDevice(); }}
+                    onPress={handleComingSoon}
                   >
                     <Text style={styles.actionCardIcon}>📡</Text>
                     <Text style={styles.actionCardLabel}>Add Scanner</Text>
@@ -284,13 +388,28 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 {/* Family Sharing */}
                 <TouchableOpacity
                   style={styles.familyCard}
-                  onPress={() => { onClose(); onOpenFamilySharing(); }}
+                  onPress={handleComingSoon}
                 >
                   <View style={styles.familyCardLeft}>
                     <Text style={styles.familyCardIcon}>👨‍👩‍👧</Text>
                     <View>
                       <Text style={styles.familyCardTitle}>Family Sharing</Text>
                       <Text style={styles.familyCardSub}>Invite members · Manage access</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.familyCardArrow}>›</Text>
+                </TouchableOpacity>
+
+                {/* Donation card */}
+                <TouchableOpacity
+                  style={styles.donationCard}
+                  onPress={() => Linking.openURL('https://www.paypal.com/paypalme/yuensinghor')}
+                >
+                  <View style={styles.familyCardLeft}>
+                    <Text style={styles.familyCardIcon}>☕</Text>
+                    <View>
+                      <Text style={styles.familyCardTitle}>Buy Me a Coffee</Text>
+                      <Text style={styles.familyCardSub}>Support development · PayPal donation</Text>
                     </View>
                   </View>
                   <Text style={styles.familyCardArrow}>›</Text>
@@ -315,6 +434,44 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </>
           )}
         </ScrollView>
+      {/* Photo options bottom sheet */}
+      <Modal
+        visible={showPhotoOptions}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPhotoOptions(false)}
+      >
+        <TouchableOpacity
+          style={styles.photoSheetBackdrop}
+          activeOpacity={1}
+          onPress={() => setShowPhotoOptions(false)}
+        >
+          <View style={styles.photoSheet}>
+            <Text style={styles.photoSheetTitle}>Profile Photo</Text>
+            <TouchableOpacity
+              style={styles.photoSheetBtn}
+              onPress={() => { setPendingAction('gallery'); setShowPhotoOptions(false); }}
+            >
+              <Text style={styles.photoSheetBtnIcon}>📷</Text>
+              <Text style={styles.photoSheetBtnText}>Upload from Gallery</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.photoSheetBtn}
+              onPress={() => { setPendingAction('random'); setShowPhotoOptions(false); }}
+            >
+              <Text style={styles.photoSheetBtnIcon}>🎲</Text>
+              <Text style={styles.photoSheetBtnText}>Random Avatar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.photoSheetBtn, styles.photoSheetCancel]}
+              onPress={() => setShowPhotoOptions(false)}
+            >
+              <Text style={[styles.photoSheetBtnText, { color: '#94a3b8' }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       </SafeAreaView>
     </Modal>
   );
@@ -418,6 +575,32 @@ const styles = StyleSheet.create({
   familyCardTitle: { fontSize: 15, fontWeight: '800', color: '#0f172a', marginBottom: 2 },
   familyCardSub:   { fontSize: 12, color: '#64748b', fontWeight: '500' },
   familyCardArrow: { fontSize: 24, color: '#94a3b8', fontWeight: '300' },
+  langCard:          { backgroundColor: '#f8fafc', borderRadius: 20, padding: 18, marginBottom: 16, borderWidth: 1, borderColor: '#e2e8f0' },
+  langCardTitle:     { fontSize: 13, fontWeight: '800', color: '#0f172a', marginBottom: 14 },
+  langBtnRow:        { flexDirection: 'row', gap: 10 },
+  langBtn:           { flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#e2e8f0', alignItems: 'center' },
+  langBtnActive:     { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+  langBtnText:       { fontSize: 13, fontWeight: '700', color: '#64748b' },
+  langBtnTextActive: { color: '#fff' },
+  donationCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fffbeb',
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  avatarUploading: { position: 'absolute', width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
+  photoSheetBackdrop:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  photoSheet:          { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
+  photoSheetTitle:     { fontSize: 13, fontWeight: '700', color: '#94a3b8', textAlign: 'center', marginBottom: 16, letterSpacing: 1 },
+  photoSheetBtn:       { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 16, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
+  photoSheetBtnIcon:   { fontSize: 22 },
+  photoSheetBtnText:   { fontSize: 15, fontWeight: '700', color: '#0f172a' },
+  photoSheetCancel:    { justifyContent: 'center' },
   upgradeNote: {
     fontSize: 12, color: '#94a3b8', fontWeight: '500',
     textAlign: 'center', lineHeight: 18,
