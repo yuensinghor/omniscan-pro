@@ -75,6 +75,10 @@ export default function App() {
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
   const [workspaceRole, setWorkspaceRole]       = useState<'owner' | 'editor' | 'viewer' | null>(null);
 
+  const applyUser = useCallback((nextUser: AppUser) => {
+    setUser(nextUser);
+  }, []);
+
   // ─── Language init — load saved preference before first render ──────────────
   useEffect(() => {
     initLang(); // loads saved lang from AsyncStorage, reloads if different from current
@@ -98,12 +102,11 @@ export default function App() {
         if (event === 'USER_UPDATED') {
           // user_metadata changed (e.g. avatar upload) — re-fetch fresh session
           // because the session object passed here may be a stale reference
-          const { data: { session: fresh } } = await supabase.auth.getSession();
-          if (fresh?.user) {
+          if (session?.user) {
             setUser({
-              id: fresh.user.id,
-              email: fresh.user.email || '',
-              user_metadata: fresh.user.user_metadata,
+              id: session.user.id,
+              email: session.user.email || '',
+              user_metadata: session.user.user_metadata,
             });
           }
           return;
@@ -191,16 +194,17 @@ export default function App() {
   // ─── Realtime subscription ────────────────────────────────────────────────
   useEffect(() => {
     if (!user) return;
+    const userId = user.id;
     // Check if user is a member of someone else's workspace
-    supabase.rpc('get_my_workspace', { p_user_id: user.id }).then(({ data }) => {
-      if (data?.member && data.owner_id !== user.id) {
+    supabase.rpc('get_my_workspace', { p_user_id: userId }).then(({ data }) => {
+      if (data?.member && data.owner_id !== userId) {
         setWorkspaceOwnerId(data.owner_id);
         setWorkspaceRole(data.role);
         fetchInventory(data.owner_id);
       } else {
         setWorkspaceOwnerId(null);
         setWorkspaceRole(null);
-        fetchInventory(user.id);
+        fetchInventory(userId);
       }
     });
 
@@ -208,22 +212,22 @@ export default function App() {
       .channel('app_inventory_channel')
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'inventory_logs',
-        filter: `owner_id=eq.${user.id}`,
+        filter: `owner_id=eq.${userId}`,
       }, (payload) => {
         applyLogEvent(payload);
       })
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'products',
-        filter: `owner_id=eq.${user.id}`,
+        filter: `owner_id=eq.${userId}`,
       }, () => {
         // Product metadata changed (name/image/category) — need full sync
-        syncInventory(user.id);
+        syncInventory(userId);
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, fetchInventory, syncInventory, applyLogEvent]);
+  }, [user?.id, fetchInventory, syncInventory, applyLogEvent]);
 
   // ─── Android hardware back button ─────────────────────────────────────────
   // Priority order (highest first): overlays close before screens pop
@@ -434,6 +438,7 @@ export default function App() {
       <ProfileScreen
         user={user}
         visible={profileOpen}
+        onUserUpdated={applyUser}
         onClose={() => setProfileOpen(false)}
         onAddDevice={() => {
           setProfileOpen(false);

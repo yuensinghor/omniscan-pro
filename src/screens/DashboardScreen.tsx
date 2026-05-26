@@ -604,7 +604,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const userName   = user.user_metadata?.full_name || user.email.split('@')[0];
   const avatarSeed = user.user_metadata?.avatar_seed || user.email;
   const avatarUri  = user.user_metadata?.avatar_url
-    ? user.user_metadata.avatar_url
+    ? `${user.user_metadata.avatar_url.split('?')[0]}?t=${user.user_metadata.avatar_updated_at || 0}`
     : `https://api.dicebear.com/7.x/avataaars/svg?seed=${avatarSeed}`;
 
   return (

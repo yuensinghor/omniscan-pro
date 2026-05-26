@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { AppUser, UserTier } from '../types';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env';
+import { SUPABASE_URL } from '@env';
 import { t, setLang, getLang, Lang } from '../i18n';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
@@ -29,6 +29,7 @@ interface ProfileScreenProps {
   onAddDevice: () => void;
   onOpenHistory: () => void;
   onOpenFamilySharing: () => void;
+  onUserUpdated?: (user: AppUser) => void;
 }
 
 const TIER_PLANS = [
@@ -60,6 +61,26 @@ const TIER_PLANS = [
     accent: '#7c3aed',
   },
 ];
+
+const AVATAR_BUCKET = 'avatars';
+
+async function uploadAvatar(localUri: string, userId: string, mimeType = 'image/jpeg'): Promise<string> {
+  const path = `${userId}/avatar`;
+  const baseUrl = SUPABASE_URL.replace(/\/$/, '');
+
+  const base64 = await FileSystem.readAsStringAsync(localUri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  const bytes = new Uint8Array(Buffer.from(base64, 'base64'));
+
+  const { error } = await supabase.storage
+    .from(AVATAR_BUCKET)
+    .upload(path, bytes, { contentType: mimeType, upsert: true });
+
+  if (error) throw error;
+
+  return `${baseUrl}/storage/v1/object/public/${AVATAR_BUCKET}/${path}`;
+}
 
 // ─── Feedback Panel ──────────────────────────────────────────────────────────
 
@@ -142,12 +163,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onAddDevice,
   onOpenHistory,
   onOpenFamilySharing,
+  onUserUpdated,
 }) => {
   // ── State ──────────────────────────────────────────────────────────────────
   const [showUpgrade, setShowUpgrade]           = useState(false);
   const [showPhotoOptions, setShowPhotoOptions] = useState(false);
   const [uploadingAvatar, setUploadingAvatar]   = useState(false);
-  const [modalPaused, setModalPaused]           = useState(false);
+  const [pickingAvatar, setPickingAvatar]       = useState(false);
   const [feedbackText, setFeedbackText]         = useState('');
   const [feedbackSent, setFeedbackSent]         = useState(false);
   const [displayName, setDisplayName]           = useState(
@@ -159,13 +181,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   // Dedicated state for real uploaded photo — separate from DiceBear seed
   const [avatarUrl, setAvatarUrl]               = useState<string | null>(
     user.user_metadata?.avatar_url
-      ? user.user_metadata.avatar_url.split('?')[0] + '?t=' + Date.now()
+      ? user.user_metadata.avatar_url.split('?')[0] + '?t=' + (user.user_metadata.avatar_updated_at || Date.now())
       : null,
   );
 
   const tier: UserTier = user.user_metadata?.tier || 'FREE';
   const validUntil     = user.user_metadata?.valid_until;
   const tierPlan       = TIER_PLANS.find(p => p.id === tier) || TIER_PLANS[0];
+  const pickingAvatarRef = useRef(false);
 
   // ── Callbacks (defined before useEffects that reference them) ──────────────
 
@@ -183,74 +206,82 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     const seed = Math.random().toString(36).slice(2, 9);
     setAvatarSeed(seed);
     setAvatarUrl(null);
-    await supabase.auth.updateUser({ data: { avatar_seed: seed, avatar_url: null } });
-  }, []);
+    const { data } = await supabase.auth.updateUser({
+      data: { avatar_seed: seed, avatar_url: null, avatar_updated_at: Date.now() },
+    });
+    const updatedUser = data.user;
+    if (updatedUser) {
+      onUserUpdated?.({
+        id: updatedUser.id,
+        email: updatedUser.email || user.email,
+        user_metadata: updatedUser.user_metadata,
+      });
+    }
+  }, [onUserUpdated, user.email]);
 
   const closePhotoOptions = useCallback(() => {
     setShowPhotoOptions(false);
   }, []);
 
   const handlePickAvatar = useCallback(async () => {
-    setModalPaused(true);
-    await new Promise(resolve => setTimeout(resolve, 450));
+    if (pickingAvatarRef.current) return;
+    pickingAvatarRef.current = true;
+    setPickingAvatar(true);
+    setShowPhotoOptions(false);
+    console.log('[ProfileScreen] Avatar picker opening');
+    await new Promise(resolve => setTimeout(resolve, 250));
 
     try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Permission denied', t.permissionDenied);
-        return;
-      }
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.6,
       });
+      console.log('[ProfileScreen] Avatar picker result', {
+        canceled: result.canceled,
+        assets: result.assets?.length || 0,
+      });
       if (result.canceled || !result.assets?.length) return;
 
-      setUploadingAvatar(true);
       const uri  = result.assets[0].uri;
-      const path = `${user.id}/avatar.jpg`;
-      const storageBaseUrl = SUPABASE_URL.replace(/\/$/, '');
-
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) throw new Error('Not authenticated.');
-
-      const uploadUrl = `${storageBaseUrl}/storage/v1/object/avatars/${path}`;
-      const uploadResult = await FileSystem.uploadAsync(uploadUrl, uri, {
-        httpMethod:  'PUT',
-        uploadType:  FileSystem.FileSystemUploadType.BINARY_CONTENT,
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'apikey':        SUPABASE_ANON_KEY,
-          'Content-Type':  'image/jpeg',
-          'x-upsert':      'true',
-        },
+      setAvatarUrl(uri);
+      setPickingAvatar(false);
+      setUploadingAvatar(true);
+      console.log('[ProfileScreen] Avatar upload starting', {
+        mimeType: result.assets[0].mimeType || 'image/jpeg',
       });
 
-      if (uploadResult.status !== 200 && uploadResult.status !== 201) {
-        throw new Error(`Avatar upload failed with status ${uploadResult.status}`);
-      }
-
-      const publicUrl = `${storageBaseUrl}/storage/v1/object/public/avatars/${path}`;
-      const cacheBustedUrl = `${publicUrl}?t=${Date.now()}`;
-      await supabase.auth.updateUser({ data: { avatar_url: publicUrl } });
+      const publicUrl = await uploadAvatar(uri, user.id, result.assets[0].mimeType || 'image/jpeg');
+      console.log('[ProfileScreen] Avatar upload finished');
+      const avatarUpdatedAt = Date.now();
+      const cacheBustedUrl = `${publicUrl}?t=${avatarUpdatedAt}`;
+      const { data, error } = await supabase.auth.updateUser({
+        data: { avatar_url: publicUrl, avatar_updated_at: avatarUpdatedAt },
+      });
+      if (error) throw error;
+      console.log('[ProfileScreen] Avatar metadata saved');
       setAvatarUrl(cacheBustedUrl);
+      const updatedUser = data.user;
+      if (updatedUser) {
+        onUserUpdated?.({
+          id: updatedUser.id,
+          email: updatedUser.email || user.email,
+          user_metadata: updatedUser.user_metadata,
+        });
+      }
     } catch (err: any) {
       console.warn('[ProfileScreen] Avatar upload failed', err);
       Alert.alert('Upload Failed', t.uploadFailed);
     } finally {
       setUploadingAvatar(false);
-      setModalPaused(false);
+      setPickingAvatar(false);
+      pickingAvatarRef.current = false;
     }
-  }, [user.id]);
+  }, [onUserUpdated, user.email, user.id]);
 
   const handleGalleryOption = useCallback(() => {
-    setShowPhotoOptions(false);
-    setTimeout(() => {
-      handlePickAvatar();
-    }, 500);
+    handlePickAvatar();
   }, [handlePickAvatar]);
 
   const handleRandomAvatarOption = useCallback(() => {
@@ -291,7 +322,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     const storedUrl = user.user_metadata?.avatar_url || null;
     if (storedUrl) {
       const base = storedUrl.split('?')[0];
-      setAvatarUrl(`${base}?t=${Date.now()}`);
+      setAvatarUrl(`${base}?t=${user.user_metadata?.avatar_updated_at || Date.now()}`);
     } else {
       setAvatarUrl(null);
     }
@@ -312,7 +343,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   }, [visible, showPhotoOptions, showUpgrade, closePhotoOptions, onClose]);
 
   return (
-    <Modal visible={visible && !modalPaused} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <ScrollView keyboardShouldPersistTaps="handled">
           {!showUpgrade ? (
@@ -342,7 +373,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   )}
                   <TouchableOpacity
                     style={styles.avatarEditBtn}
-                    onPress={() => !uploadingAvatar && setShowPhotoOptions(true)}
+                    onPress={() => !uploadingAvatar && !pickingAvatar && setShowPhotoOptions(true)}
                   >
                     <Text style={styles.avatarEditIcon}>{uploadingAvatar ? '⏳' : '✏️'}</Text>
                   </TouchableOpacity>
@@ -459,6 +490,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <TouchableOpacity
               style={styles.photoSheetBtn}
               onPress={handleGalleryOption}
+              disabled={pickingAvatar || uploadingAvatar}
             >
               <Text style={styles.photoSheetBtnIcon}>📷</Text>
               <Text style={styles.photoSheetBtnText}>Upload from Gallery</Text>
@@ -466,6 +498,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <TouchableOpacity
               style={styles.photoSheetBtn}
               onPress={handleRandomAvatarOption}
+              disabled={pickingAvatar || uploadingAvatar}
             >
               <Text style={styles.photoSheetBtnIcon}>🎲</Text>
               <Text style={styles.photoSheetBtnText}>Random Avatar</Text>
