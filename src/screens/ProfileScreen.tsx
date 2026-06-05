@@ -18,9 +18,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { AppUser, UserTier } from '../types';
 import { SUPABASE_URL } from '@env';
-import { t, setLang, getLang, Lang } from '../i18n';
+import { t } from '../i18n';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
+
+
 
 interface ProfileScreenProps {
   user: AppUser;
@@ -228,7 +230,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     pickingAvatarRef.current = true;
     setPickingAvatar(true);
     setShowPhotoOptions(false);
-    console.log('[ProfileScreen] Avatar picker opening');
     await new Promise(resolve => setTimeout(resolve, 250));
 
     try {
@@ -238,29 +239,20 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         aspect: [1, 1],
         quality: 0.6,
       });
-      console.log('[ProfileScreen] Avatar picker result', {
-        canceled: result.canceled,
-        assets: result.assets?.length || 0,
-      });
       if (result.canceled || !result.assets?.length) return;
 
       const uri  = result.assets[0].uri;
       setAvatarUrl(uri);
       setPickingAvatar(false);
       setUploadingAvatar(true);
-      console.log('[ProfileScreen] Avatar upload starting', {
-        mimeType: result.assets[0].mimeType || 'image/jpeg',
-      });
 
       const publicUrl = await uploadAvatar(uri, user.id, result.assets[0].mimeType || 'image/jpeg');
-      console.log('[ProfileScreen] Avatar upload finished');
       const avatarUpdatedAt = Date.now();
       const cacheBustedUrl = `${publicUrl}?t=${avatarUpdatedAt}`;
       const { data, error } = await supabase.auth.updateUser({
         data: { avatar_url: publicUrl, avatar_updated_at: avatarUpdatedAt },
       });
       if (error) throw error;
-      console.log('[ProfileScreen] Avatar metadata saved');
       setAvatarUrl(cacheBustedUrl);
       const updatedUser = data.user;
       if (updatedUser) {
@@ -271,7 +263,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         });
       }
     } catch (err: any) {
-      console.warn('[ProfileScreen] Avatar upload failed', err);
       Alert.alert('Upload Failed', t.uploadFailed);
     } finally {
       setUploadingAvatar(false);
@@ -580,26 +571,9 @@ const styles = StyleSheet.create({
     paddingVertical: 20, alignItems: 'center', gap: 8,
     borderWidth: 1, borderColor: '#e2e8f0',
   },
-  actionCardUpgrade: { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' }, // kept for compat
   actionCardFeedback: { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' },
   actionCardIcon: { fontSize: 28 },
   actionCardLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', letterSpacing: 1 },
-  planCard: {
-    borderRadius: 20, padding: 20, marginBottom: 12,
-    borderWidth: 1, borderColor: 'transparent',
-  },
-  planCardActive: { borderColor: '#10b981' },
-  planHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  planName: { fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 6 },
-  planFeatures: { fontSize: 12, fontWeight: '500', color: '#64748b', lineHeight: 18 },
-  planPriceBox: { alignItems: 'flex-end' },
-  planPrice: { fontSize: 20, fontWeight: '900' },
-  planPeriod: { fontSize: 10, fontWeight: '600', color: '#94a3b8' },
-  currentPlanBadge: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5, marginTop: 10 },
   familyCard: {
     flexDirection: 'row',
     alignItems: 'center',

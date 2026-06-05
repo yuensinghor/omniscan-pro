@@ -1,23 +1,26 @@
 {
-  "cli": { "version": ">= 5.9.1" },
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "local"
+  },
   "build": {
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "ios": { "simulator": true }
+      "android": {
+        "buildType": "apk"
+      }
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
-      },
-      "env": {
-        "SUPABASE_URL": "https://lfvpknapbzplcxrqqhbp.supabase.co",
-        "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxmdnBrbmFwYnpwbGN4cnFxaGJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MjUxMTAsImV4cCI6MjA4NjUwMTExMH0.7UzJaLnt81mgmlhHpd085Jz-fT-nqNgFOhsl3HFujB8"
       }
     },
     "production": {
-      "autoIncrement": true
+      "android": {
+        "buildType": "app-bundle"
+      }
     }
   },
   "submit": {

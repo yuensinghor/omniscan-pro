@@ -1,5 +1,5 @@
 /**
- * OmniScan Pro — Native Mobile App (React Native / Expo)
+ * BarcodesScanner Pro — Native Mobile App (React Native / Expo)
  *
  * Architecture:
  *   - Single App.tsx manages global state (auth, inventory, active screen)
@@ -14,6 +14,8 @@
  *   - inventory_summary    → view joining both
  */
 
+import { useInterstitialAd } from './src/hooks/useInterstitialAd';
+import { userTierToAdUserType } from './src/config/adConfig';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -22,6 +24,7 @@ import {
   Alert,
   StatusBar,
   BackHandler,
+  Linking,
 } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-gesture-handler';
@@ -46,9 +49,12 @@ import { FamilySharingScreen }  from './src/screens/FamilySharingScreen';
 type Screen = 'dashboard' | 'history' | 'provisioning';
 
 export default function App() {
+  //useInterstitialAd
   // ─── Auth ────────────────────────────────────────────────────────────────
   const [user, setUser]               = useState<AppUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const adUserType = userTierToAdUserType(user?.user_metadata?.tier);
+  const { showInterstitialIfReady } = useInterstitialAd(adUserType);
 
   // ─── Navigation ──────────────────────────────────────────────────────────
   const [screen, setScreen] = useState<Screen>('dashboard');
@@ -74,6 +80,7 @@ export default function App() {
   // workspaceOwnerId: if set, we load inventory for this owner (not our own)
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
   const [workspaceRole, setWorkspaceRole]       = useState<'owner' | 'editor' | 'viewer' | null>(null);
+  const fetchInventoryRef = useRef<(userId: string) => void>(() => {});
 
   const applyUser = useCallback((nextUser: AppUser) => {
     setUser(nextUser);
@@ -83,6 +90,48 @@ export default function App() {
   useEffect(() => {
     initLang(); // loads saved lang from AsyncStorage, reloads if different from current
   }, []);
+
+  // ─── Deep link handler (invite links) ────────────────────────────────────
+  const handleInviteUrl = useCallback(async (url: string) => {
+    const match = url.match(/\/invite\/([a-zA-Z0-9_-]+)/);
+    if (!match) return;
+    const token = match[1];
+
+    // Must be logged in to accept
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      // Store token, user will be prompted after login
+      Alert.alert(
+        'Invite Link',
+        'Please sign in or create an account to join this shared inventory.',
+      );
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.rpc('accept_invite_by_token', { p_token: token });
+      if (error) throw error;
+      if (data?.error) {
+        Alert.alert('Could not join', data.error);
+        return;
+      }
+      // Joined successfully — reload inventory for new workspace owner
+      Alert.alert('✅ Joined!', 'You now have access to the shared inventory.');
+      setWorkspaceOwnerId(data.owner_id);
+      setWorkspaceRole(data.role);
+      fetchInventoryRef.current(data.owner_id);
+    } catch (err: any) {
+      Alert.alert('Error', 'Could not process invite link. Please try again.');
+    }
+  }, []);
+
+  useEffect(() => {
+    // App opened via deep link while closed
+    Linking.getInitialURL().then(url => { if (url) handleInviteUrl(url); });
+    // App already open, link tapped
+    const sub = Linking.addEventListener('url', ({ url }) => handleInviteUrl(url));
+    return () => sub.remove();
+  }, [handleInviteUrl]);
 
   // ─── Auth lifecycle ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -236,6 +285,7 @@ export default function App() {
       // 1. Close scan screen
       if (scanMode) {
         setScanMode(null);
+        showInterstitialIfReady();
         return true;
       }
       // 2. Close new item form
@@ -293,6 +343,7 @@ export default function App() {
     if (!user || !scanMode) return;
     const mode = scanMode;
     setScanMode(null); // close scanner immediately
+    showInterstitialIfReady(); 
 
     const existing = summary.find(i => i.barcode === barcode && i.owner_id === user.id);
 
@@ -366,6 +417,7 @@ export default function App() {
       {screen === 'dashboard' && (
         <DashboardScreen
           user={user}
+          userType={adUserType}
           summary={summary}
           loading={dataLoading}
           onRefresh={() => fetchInventory(user.id)}
@@ -401,7 +453,7 @@ export default function App() {
           <ScanScreen
             mode={scanMode}
             onScan={handleScanResult}
-            onClose={() => setScanMode(null)}
+            onClose={() => { setScanMode(null); showInterstitialIfReady(); }}
           />
         </View>
       )}

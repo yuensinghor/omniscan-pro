@@ -45,7 +45,7 @@ const LogRow: React.FC<{ log: InventoryLog }> = ({ log }) => {
       <ActionIcon type={log.action_type} />
       <View style={historyStyles.info}>
         <Text style={historyStyles.name} numberOfLines={1}>
-          {log.name || `Barcode: ${log.barcode}`}
+{log.display_name || log.name || `Barcode: ${log.barcode}`}
         </Text>
         <View style={historyStyles.meta}>
           <Text style={historyStyles.metaText}>{time}</Text>
@@ -70,27 +70,18 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({ userId, onBack }) 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const { data, error: fetchError } = await supabase
-        .from('inventory_logs')
-        .select('*, products(name)')
-        .eq('owner_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      // Flatten product name into log row
-      if (data) {
-        data.forEach((log: any) => {
-          if (!log.name && log.products?.name) {
-            log.name = log.products.name;
-          }
-        });
-      }
+const { data, error: fetchError } = await supabase
+  .from('inventory_history')
+  .select('*')
+  .eq('owner_id', userId)
+  .order('created_at', { ascending: false })
+  .limit(100);
 
       if (fetchError) throw fetchError;
       setLogs(data || []);
       setError(null);
     } catch (err: any) {
-      setError(err.message || 'Failed to load history.');
+      setError('Could not load activity history. Please try again.');
     } finally {
       setLoading(false);
     }

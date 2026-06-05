@@ -167,7 +167,7 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
         name:      name.trim(),
         category:  category.trim() || 'General',
         image_url: finalImageUrl || null,
-      }, { onConflict: 'barcode' });
+      }, { onConflict: 'barcode,owner_id' });
 
       if (error) throw error;
       setPendingUri(null);

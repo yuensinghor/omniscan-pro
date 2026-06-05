@@ -64,7 +64,7 @@ const translations = {
     deleteFailed:       'Could not remove item. Please try again.',
     galleryError:       'Could not open photo gallery. Please check app permissions.',
     shareUnavailable:   'Could not create share link. Please try again.',
-    permissionDenied:   'Allow Photos in Settings → Apps → OmniScan Pro → Permissions.',
+    permissionDenied:   'Allow Photos in Settings → Apps → BarcodesScanner Pro → Permissions.',
     // Profile
     account:            'Account',
     displayName:        'DISPLAY NAME',
@@ -96,7 +96,7 @@ const translations = {
     inventoryHistory:   'YOUR INVENTORY HISTORY',
     noActivity:         'No activity yet',
     // Exit
-    exitTitle:          'Exit OmniScan Pro',
+    exitTitle:          'Exit BarcodesScanner Pro',
     exitMsg:            'Are you sure you want to exit?',
     exit:               'Exit',
     // Family sharing
@@ -141,8 +141,7 @@ const translations = {
     addOne:             '1 hinzufügen',
     removeOne:          '1 entfernen',
     addOneOf:           (name: string) => `1 Einheit von ${name} hinzufügen?`,
-    removeOneOf:        (name: string) => `Remove 1 unit of ${name}?`,
-    confirm:            'Bestätigen',
+    removeOneOf:        (name: string) => `1 Einheit von ${name} entfernen?`,
     cancel:             'Abbrechen',
     setQuantity:        'Menge festlegen',
     outOfStockAlert:    'Nicht vorrätig',
@@ -171,7 +170,7 @@ const translations = {
     deleteFailed:       'Artikel konnte nicht entfernt werden. Bitte erneut versuchen.',
     galleryError:       'Fotogalerie konnte nicht geöffnet werden. Bitte Berechtigungen prüfen.',
     shareUnavailable:   'Freigabelink konnte nicht erstellt werden. Bitte erneut versuchen.',
-    permissionDenied:   'Fotos erlauben unter Einstellungen → Apps → OmniScan Pro → Berechtigungen.',
+    permissionDenied:   'Fotos erlauben unter Einstellungen → Apps → BarcodesScanner Pro → Berechtigungen.',
     // Profile
     account:            'Konto',
     displayName:        'ANZEIGENAME',
@@ -203,7 +202,7 @@ const translations = {
     inventoryHistory:   'IHR INVENTARVERLAUF',
     noActivity:         'Noch keine Aktivität',
     // Exit
-    exitTitle:          'OmniScan Pro beenden',
+    exitTitle:          'BarcodesScanner Pro beenden',
     exitMsg:            'Möchten Sie die App wirklich beenden?',
     exit:               'Beenden',
     // Family sharing

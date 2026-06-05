@@ -1,37 +1,89 @@
-// src/config/adConfig.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// AdMob configuration
-//
-// HOW TO SET UP:
-// 1. Create an AdMob account at https://admob.google.com
-// 2. Add your app and create a Banner Ad unit
-// 3. Replace the placeholder values below with your real IDs
-// 4. Install the SDK:  npm install react-native-google-mobile-ads
-// 5. Add to app.json plugins:
-//    {
-//      "react-native-google-mobile-ads",
-//      { "androidAppId": "ca-app-pub-XXXXXXXXXXXXXXXX~XXXXXXXXXX" }
-//    }
-// 6. Run a new EAS build
-// 7. In DashboardScreen, swap <AdBanner /> placeholder for the real AdMob component
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * adConfig.ts — Central AdMob configuration
+ *
+ * HOW TO USE:
+ * 1. During development: test IDs below are already set (Google's official test IDs).
+ *    Ads will show as "Test Ad" — this is correct, don't worry.
+ * 2. Before production release: replace the PRODUCTION IDs with real ones from
+ *    your AdMob dashboard (admob.google.com) and set IS_PRODUCTION = true.
+ *
+ * IMPORTANT: Never use real ad unit IDs during development/testing.
+ * Google can ban your AdMob account for clicking your own real ads.
+ */
 
-export const AD_CONFIG = {
-  // Replace with your real AdMob Android App ID
-  androidAppId: 'ca-app-pub-XXXXXXXXXXXXXXXX~XXXXXXXXXX',
+import { Platform } from 'react-native';
 
-  // Replace with your real Banner Ad Unit ID
-  // Use test ID during development: 'ca-app-pub-3940256099942544/6300978111'
-  bannerAdUnitId: 'ca-app-pub-XXXXXXXXXXXXXXXX/XXXXXXXXXX',
+// ─── Toggle this when you're ready to go live ────────────────────────────────
+const IS_PRODUCTION = false;
 
-  // Test mode — set to false in production
-  testMode: true,
+// ─── Test Ad Unit IDs (Google's official test IDs — safe to use always) ──────
+const TEST_IDS = {
+  android: {
+    banner:       'ca-app-pub-3940256099942544/6300978111',
+    interstitial: 'ca-app-pub-3940256099942544/1033173712',
+    rewarded:     'ca-app-pub-3940256099942544/5224354917',
+  },
+  ios: {
+    banner:       'ca-app-pub-3940256099942544/2934735716',
+    interstitial: 'ca-app-pub-3940256099942544/4411468910',
+    rewarded:     'ca-app-pub-3940256099942544/1712485313',
+  },
 };
 
-// User types that should see ads
-// Once you add user_type to your auth/profile, update this check
-export function shouldShowAds(userType: string | undefined): boolean {
-  // Free users see ads; pro and scanner_owner users do not
-  if (userType === 'pro' || userType === 'scanner_owner') return false;
-  return true; // free or undefined → show ads
+// ─── Production Ad Unit IDs — replace with your real IDs from AdMob ──────────
+// Get these from: admob.google.com → Apps → Ad units
+// Format: ca-app-pub-XXXXXXXXXXXXXXXX/NNNNNNNNNN
+const PRODUCTION_IDS = {
+  android: {
+    banner:       'ca-app-pub-3479058134966847/REPLACE_BANNER',       // TODO: replace
+    interstitial: 'ca-app-pub-3479058134966847/REPLACE_INTERSTITIAL', // TODO: replace
+    rewarded:     'ca-app-pub-3479058134966847/REPLACE_REWARDED',     // TODO: replace
+  },
+  ios: {
+    banner:       'ca-app-pub-3479058134966847/REPLACE_BANNER',       // TODO: replace
+    interstitial: 'ca-app-pub-3479058134966847/REPLACE_INTERSTITIAL', // TODO: replace
+    rewarded:     'ca-app-pub-3479058134966847/REPLACE_REWARDED',     // TODO: replace
+  },
+};
+
+// ─── Active IDs (auto-selects based on IS_PRODUCTION flag) ───────────────────
+const activeIds = IS_PRODUCTION ? PRODUCTION_IDS : TEST_IDS;
+const platform  = Platform.OS === 'ios' ? 'ios' : 'android';
+
+export const AD_UNIT_IDS = {
+  banner:       activeIds[platform].banner,
+  interstitial: activeIds[platform].interstitial,
+  rewarded:     activeIds[platform].rewarded,
+};
+
+// ─── Ad visibility logic ──────────────────────────────────────────────────────
+// Free users see ads. Pro and Scanner Bundle users see no ads.
+export type UserType = 'free' | 'pro' | 'scanner_bundle' | undefined;
+
+export function shouldShowAds(userType: UserType): boolean {
+  if (!userType || userType === 'free') return true;
+  return false;
 }
+
+// ─── Tier mapper ──────────────────────────────────────────────────────────────
+// Converts the raw tier string stored in Supabase user_metadata
+// into the UserType that the ad hooks and shouldShowAds() understand.
+//
+// Usage in App.tsx:
+//   const adUserType = userTierToAdUserType(user?.user_metadata?.tier);
+//
+// Supabase tier values → AdMob UserType mapping:
+//   undefined / null / 'free'   → 'free'        (sees ads)
+//   'pro'                        → 'pro'          (no ads)
+//   'scanner_bundle'             → 'scanner_bundle' (no ads)
+//   any other unknown value      → 'free'        (safe default, sees ads)
+export function userTierToAdUserType(tier: string | undefined): UserType {
+  if (tier === 'pro') return 'pro';
+  if (tier === 'scanner_bundle') return 'scanner_bundle';
+  return 'free';
+}
+
+// ─── Interstitial throttle settings ──────────────────────────────────────────
+// Never show interstitials more often than this (in milliseconds).
+// 5 minutes = 300,000ms — respectful for a business tool.
+export const INTERSTITIAL_MIN_INTERVAL_MS = 5 * 60 * 1000;

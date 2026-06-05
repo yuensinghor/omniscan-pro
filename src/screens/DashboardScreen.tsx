@@ -22,6 +22,7 @@ import { AppUser, InventorySummary, ScanMode } from '../types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { shouldShowAds } from '../config/adConfig';
 import { t } from '../i18n';
+import { AdBanner } from '../components/AdBanner';
 
 // ─── Ad Banner ────────────────────────────────────────────────────────────────
 // Placeholder sized to standard AdMob banner (320×50).
@@ -29,14 +30,14 @@ import { t } from '../i18n';
 //   import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 //   <BannerAd unitId={AD_CONFIG.bannerAdUnitId} size={BannerAdSize.BANNER} />
 
-const AdBanner: React.FC = () => (
-  <View style={adStyles.container}>
-    <View style={adStyles.banner}>
-      <Text style={adStyles.label}>AD</Text>
-      <Text style={adStyles.placeholder}>Advertisement</Text>
-    </View>
-  </View>
-);
+//const AdBanner: React.FC = () => (
+//  <View style={adStyles.container}>
+//    <View style={adStyles.banner}>
+//      <Text style={adStyles.label}>AD</Text>
+//      <Text style={adStyles.placeholder}>Advertisement</Text>
+//    </View>
+//  </View>
+//);
 
 interface DashboardScreenProps {
   user: AppUser;
@@ -500,10 +501,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         token = created.token;
       }
 
-      const shareUrl = `https://omniscanpro.app/share/${token}`;
+      const shareUrl = `https://barcodesscanner.com/share/${token}`;
       await Share.share({
         title: item.name || item.barcode,
-        message: `Check out ${item.name || 'this product'} — ${shareUrl}\n\nBuild your own Mini Market with OmniScan Pro 🛒`,
+        message: `Check out ${item.name || 'this product'} — ${shareUrl}\n\nManage your inventory with Barcodes Scanner Pro 📦`,
       });
     } catch (err: any) {
       Alert.alert('Share Unavailable', t.errorShare);
@@ -617,7 +618,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             style={styles.avatar}
           />
           <View>
-            <Text style={styles.appLabel}>OmniScan Pro</Text>
+            <Text style={styles.appLabel}>Barcodes Scanner Pro</Text>
             <Text style={styles.userName}>{userName}</Text>
           </View>
         </TouchableOpacity>
@@ -675,7 +676,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           refreshControl={<RefreshControl refreshing={loading} onRefresh={onRefresh} tintColor="#10b981" />}
           renderItem={({ item }) =>
             ((qtyOverrides[item.barcode] ?? item.quantity) === 0) ? (
-              <View style={styles.zeroCard}>
+<TouchableOpacity style={styles.zeroCard} onPress={() => onEditItem(item)} activeOpacity={0.85}>
                 {item.image_url ? (
                   <Image source={{ uri: item.image_url }} style={styles.zeroCardImage} resizeMode="cover" />
                 ) : (
@@ -694,7 +695,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 >
                   <Text style={styles.reAddBtnText}>＋ Re-add</Text>
                 </TouchableOpacity>
-              </View>
+</TouchableOpacity>
             ) : (
               <InventoryCard
                 item={item}
