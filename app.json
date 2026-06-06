@@ -61,31 +61,31 @@
         "android.permission.RECORD_AUDIO"
       ]
     },
-"plugins": [
-  [
-    "expo-camera",
-    {
-      "cameraPermission": "BarcodesScanner Pro uses the camera to scan barcodes and capture product photos."
-    }
-  ],
-  [
-    "expo-image-picker",
-    {
-      "photosPermission": "BarcodesScanner Pro lets you choose photos for profile and product images."
-    }
-  ],
-  "expo-dev-client",
-  "./withAdMob"
-],
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "BarcodesScanner Pro uses the camera to scan barcodes and capture product photos."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "BarcodesScanner Pro lets you choose photos for profile and product images."
+        }
+      ],
+      "expo-dev-client",
+      "./withAdMob"
+    ],
     "extra": {
       "eas": {
         "projectId": "7952cf59-3513-40ab-88f4-8470aab2fa2e"
+      },
+      "react-native-google-mobile-ads": {
+        "android_app_id": "ca-app-pub-3479058134966847~9716777334",
+        "ios_app_id": "ca-app-pub-3479058134966847~6017735700"
       }
     },
     "owner": "yuensinghor"
-"react-native-google-mobile-ads": {
-  "android_app_id": "ca-app-pub-3479058134966847~9716777334",
-  "ios_app_id": "ca-app-pub-3479058134966847~6017735700"
-}
   }
 }
