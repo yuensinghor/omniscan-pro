@@ -11,16 +11,16 @@
         "buildType": "apk"
       }
     },
-"preview": {
-  "distribution": "internal",
-  "android": {
-    "buildType": "apk"
-  },
-  "env": {
-    "SUPABASE_URL": "https://lfvpknapbzplcxrqqhbp.supabase.co",
-    "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxmdnBrbmFwYnpwbGN4cnFxaGJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MjUxMTAsImV4cCI6MjA4NjUwMTExMH0.7UzJaLnt81mgmlhHpd085Jz-fT-nqNgFOhsl3HFujB8"
-  }
-}
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "SUPABASE_URL": "https://lfvpknapbzplcxrqqhbp.supabase.co",
+        "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxmdnBrbmFwYnpwbGN4cnFxaGJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MjUxMTAsImV4cCI6MjA4NjUwMTExMH0.7UzJaLnt81mgmlhHpd085Jz-fT-nqNgFOhsl3HFujB8"
+      }
+    },
     "production": {
       "android": {
         "buildType": "app-bundle"
