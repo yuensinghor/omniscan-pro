@@ -17,6 +17,7 @@ import {
   Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
 import { ScanMode } from '../types';
 
@@ -43,6 +44,7 @@ export const NewItemScreen: React.FC<NewItemScreenProps> = ({
   const [looking, setLooking]             = useState(false);
   const [saving, setSaving]               = useState(false);
   const [lookupFailed, setLookupFailed]   = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   // Auto-detect product when modal opens
   useEffect(() => {
@@ -88,6 +90,41 @@ export const NewItemScreen: React.FC<NewItemScreenProps> = ({
       setLookupFailed(true);
     } finally {
       setLooking(false);
+    }
+  };
+
+  // ── Photo picker ──────────────────────────────────────────────────────────
+  const handlePickPhoto = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.7,
+    });
+    if (result.canceled || !result.assets?.length) return;
+
+    const asset = result.assets[0];
+    const ext = asset.uri.split('.').pop() || 'jpg';
+    const path = `${userId}/${barcode}.${ext}`;
+
+    setUploadingPhoto(true);
+    try {
+      const response = await fetch(asset.uri);
+      const blob = await response.blob();
+      const arrayBuffer = await blob.arrayBuffer();
+
+      const { error } = await supabase.storage
+        .from('product-images')
+        .upload(path, arrayBuffer, { contentType: `image/${ext}`, upsert: true });
+
+      if (error) throw error;
+
+      const { data } = supabase.storage.from('product-images').getPublicUrl(path);
+      setImageUrl(data.publicUrl);
+    } catch (err: any) {
+      Alert.alert('Upload failed', err.message);
+    } finally {
+      setUploadingPhoto(false);
     }
   };
 
@@ -150,18 +187,26 @@ export const NewItemScreen: React.FC<NewItemScreenProps> = ({
           </View>
 
           <View style={styles.body}>
-            {/* Product image */}
-            {imageUrl ? (
-              <Image
-                source={{ uri: imageUrl }}
-                style={styles.productImage}
-                resizeMode="contain"
-              />
-            ) : (
-              <View style={styles.imagePlaceholder}>
-                <Text style={styles.imagePlaceholderIcon}>📦</Text>
-              </View>
-            )}
+            {/* Product image — tappable to change photo */}
+            <TouchableOpacity onPress={handlePickPhoto} disabled={uploadingPhoto}>
+              {imageUrl ? (
+                <Image
+                  source={{ uri: imageUrl }}
+                  style={styles.productImage}
+                  resizeMode="contain"
+                />
+              ) : (
+                <View style={styles.imagePlaceholder}>
+                  {uploadingPhoto
+                    ? <ActivityIndicator color="#10b981" size="large" />
+                    : <Text style={styles.imagePlaceholderIcon}>📦</Text>
+                  }
+                </View>
+              )}
+              <Text style={styles.changePhotoHint}>
+                {uploadingPhoto ? 'Uploading…' : 'Tap to add / change photo'}
+              </Text>
+            </TouchableOpacity>
 
             {/* Barcode chip */}
             <View style={styles.barcodeChip}>
@@ -217,9 +262,9 @@ export const NewItemScreen: React.FC<NewItemScreenProps> = ({
                 <Text style={styles.cancelBtnText}>Discard</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.saveBtn, (saving || looking) && styles.saveBtnDisabled]}
+                style={[styles.saveBtn, (saving || looking || uploadingPhoto) && styles.saveBtnDisabled]}
                 onPress={handleSave}
-                disabled={saving || looking}
+                disabled={saving || looking || uploadingPhoto}
               >
                 {saving
                   ? <ActivityIndicator color="#fff" />
@@ -266,7 +311,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
     borderWidth: 1,
     borderColor: '#f1f5f9',
-    marginBottom: 16,
   },
   imagePlaceholder: {
     width: '100%',
@@ -277,9 +321,16 @@ const styles = StyleSheet.create({
     borderColor: '#f1f5f9',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
   },
   imagePlaceholderIcon: { fontSize: 48 },
+  changePhotoHint: {
+    textAlign: 'center',
+    fontSize: 11,
+    color: '#94a3b8',
+    marginTop: 6,
+    marginBottom: 16,
+    fontWeight: '600',
+  },
   barcodeChip: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -424,7 +424,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 {/* Family Sharing */}
                 <TouchableOpacity
                   style={styles.familyCard}
-                  onPress={handleComingSoon}
+                  onPress={onOpenFamilySharing}
                 >
                   <View style={styles.familyCardLeft}>
                     <Text style={styles.familyCardIcon}>👨‍👩‍👧</Text>
