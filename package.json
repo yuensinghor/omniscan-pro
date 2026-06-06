@@ -5,20 +5,19 @@
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
-    "ios": "expo run:ios",
-    "proto:generate": "pbjs -t static-module -w commonjs -o src/proto/compiled.js src/proto/session.proto src/proto/wifi_config.proto && pbts -o src/proto/compiled.d.ts src/proto/compiled.js"
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@orbital-systems/react-native-esp-idf-provisioning": "^0.5.0",
     "@react-native-async-storage/async-storage": "1.23.1",
     "@supabase/supabase-js": "^2.43.0",
     "buffer": "^6.0.3",
-    "expo": "^56.0.9",
-    "expo-camera": "~15.0.0",
-    "expo-dev-client": "~4.0.14",
+    "expo": "~51.0.28",
+    "expo-camera": "~15.0.16",
+    "expo-dev-client": "~4.0.29",
     "expo-image-picker": "~15.0.7",
     "expo-status-bar": "~1.12.1",
-    "expo-updates": "~0.25.28",
+    "expo-updates": "~0.25.27",
     "protobufjs": "^7.3.0",
     "react": "18.2.0",
     "react-native": "0.74.1",
@@ -36,7 +35,7 @@
     "@babel/core": "^7.20.0",
     "@types/react": "~18.2.45",
     "@types/react-native": "~0.73.0",
-    "babel-preset-expo": "^56.0.14",
+    "babel-preset-expo": "~11.0.0",
     "protobufjs-cli": "^1.1.2",
     "typescript": "^5.1.3"
   },
