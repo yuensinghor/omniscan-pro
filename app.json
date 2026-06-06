@@ -75,13 +75,7 @@
         }
       ],
       "expo-dev-client",
-      [
-        "react-native-google-mobile-ads",
-        {
-          "androidAppId": "ca-app-pub-3479058134966847~9716777334",
-          "iosAppId": "ca-app-pub-3479058134966847~6017735700"
-        }
-      ]
+      "./withAdMob"
     ],
     "extra": {
       "eas": {
