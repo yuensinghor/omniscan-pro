@@ -737,17 +737,21 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
       {/* Photo viewer */}
       <NumpadModal
-        visible={!!numpadItem}
-        currentQty={numpadItem ? (qtyOverrides[numpadItem.barcode] ?? numpadItem.quantity) : 0}
-        itemName={numpadItem?.name || numpadItem?.barcode || ''}
-        onConfirm={(qty) => {
-          if (!numpadItem) return;
-          const current = qtyOverrides[numpadItem.barcode] ?? numpadItem.quantity;
-          const delta = qty - current;
-          if (delta !== 0) adjustQuantity(numpadItem.barcode, delta);
-        }}
-        onClose={() => setNumpadItem(null)}
-      />
+  visible={!!numpadItem}
+  currentQty={numpadItem ? (qtyOverrides[numpadItem.barcode] ?? numpadItem.quantity) : 0}
+  itemName={numpadItem?.name || numpadItem?.barcode || ''}
+  onConfirm={(qty) => {
+    if (!numpadItem) return;
+    // Read fresh state directly — don't rely on captured closure values
+    const barcode = numpadItem.barcode;
+    const serverItem = summary.find(i => i.barcode === barcode && i.owner_id === user.id);
+    if (!serverItem) return;
+    const current = qtyOverrides[barcode] ?? serverItem.quantity;
+    const delta = qty - current;
+    if (delta !== 0) adjustQuantity(barcode, delta);
+  }}
+  onClose={() => setNumpadItem(null)}
+/>
       <PhotoViewer uri={photoUri} onClose={() => setPhotoUri(null)} />
 
       {/* Modals */}
