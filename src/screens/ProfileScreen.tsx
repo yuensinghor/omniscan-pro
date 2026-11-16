@@ -400,7 +400,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <View style={styles.actionGrid}>
                   <TouchableOpacity
                     style={styles.actionCard}
-                    onPress={handleComingSoon}
+                    onPress={onAddDevice}
                   >
                     <Text style={styles.actionCardIcon}>📡</Text>
                     <Text style={styles.actionCardLabel}>Add Scanner</Text>
