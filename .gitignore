@@ -2,3 +2,14 @@ node_modules/
 .expo/
 .env
 .env.local
+.env.*
+!.env.example
+*.log
+/crash.log
+/package.json.backup
+/omniscan-filtered.txt
+/supabase/.temp/
+/assets/icon-backup/
+*.jks
+*.keystore
+credentials.json

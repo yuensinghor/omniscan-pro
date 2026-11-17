@@ -6,9 +6,19 @@ serve(async (req) => {
     return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } })
   }
 
-  try {
-    const { barcode, action, device_id } = await req.json()
-    console.log(`!!! [REPORT] !!! Incoming MAC: ${device_id}, Barcode: ${barcode}`);
+try {
+    const { barcode: rawBarcode, action: rawAction, device_id: rawDeviceId } = await req.json()
+    const barcode = typeof rawBarcode === 'string' ? rawBarcode.trim() : ''
+    const action = typeof rawAction === 'string' ? rawAction.trim().toUpperCase() : ''
+    const device_id = typeof rawDeviceId === 'string' ? rawDeviceId.trim() : ''
+
+    if (!barcode || barcode.length > 64 || !device_id || device_id.length > 64 || !['IN', 'OUT'].includes(action)) {
+      return new Response(JSON.stringify({ error: 'Invalid scan payload' }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 400,
+      })
+    }
+    console.log(`!!! [REPORT] !!! Incoming MAC: ${device_id}, Barcode raw: "${rawBarcode}", clean: "${barcode}"`)
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -36,6 +46,26 @@ serve(async (req) => {
 
     const foundOwnerId = deviceData.owner_id;
 
+    const { data: scanAllowed, error: scanRateError } = await supabase.rpc('consume_edge_rate_limit', {
+      p_subject_id: foundOwnerId,
+      p_bucket: 'scan-handler',
+      p_limit: 180,
+      p_window_seconds: 60,
+    })
+    if (scanRateError) {
+      console.error('[scan-handler] Rate limit check failed')
+      return new Response(JSON.stringify({ error: 'Scanner service is temporarily unavailable' }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 503,
+      })
+    }
+    if (!scanAllowed) {
+      return new Response(JSON.stringify({ error: 'Scan limit reached. Try again shortly.' }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 429,
+      })
+    }
+
     // 2. PRODUCT LOOKUP: Call swift-action to get product info
     let product_name = barcode;
     let category = 'General';
@@ -50,9 +80,10 @@ serve(async (req) => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+            'apikey': Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
           },
-          body: JSON.stringify({ barcode }),
+          body: JSON.stringify({ barcode, owner_id: foundOwnerId }),
         }
       );
 
@@ -73,6 +104,25 @@ serve(async (req) => {
       console.error(`[scan-handler] Product lookup failed: ${lookupErr.message}, using barcode as name`);
     }
 
+// 2b. Only insert product if it doesn't already exist
+const { data: existingProduct } = await supabase
+  .from('products')
+  .select('barcode')
+  .eq('barcode', barcode)
+  .eq('owner_id', foundOwnerId)
+  .single()
+
+if (!existingProduct) {
+  await supabase
+    .from('products')
+    .insert({
+      barcode:   barcode,
+      name:      product_name,
+      category:  category,
+      image_url: image_url,
+      owner_id:  foundOwnerId,
+    })
+}
     // 3. INSERT: Save into inventory_logs
     // quantity: +1 for IN, -1 for OUT — drives inventory_summary SUM
     const quantity = (action === 'OUT') ? -1 : 1;

@@ -1,7 +1,7 @@
 // src/screens/FamilySharingScreen.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Modal,
+  View, Text, TouchableOpacity, StyleSheet, Modal, RefreshControl,
   Alert, ActivityIndicator, ScrollView, Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -29,6 +29,7 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
   const [members, setMembers]           = useState<Member[]>([]);
   const [isOwner, setIsOwner]           = useState(false);
   const [isMember, setIsMember]         = useState(false);
+  const [memberRole, setMemberRole]     = useState<'editor' | 'viewer'>('viewer');
   const [ownerEmail, setOwnerEmail]     = useState<string | null>(null);
   const [workspaceId, setWorkspaceId]   = useState<string | null>(null);
   const [generatingLink, setGeneratingLink] = useState(false);
@@ -53,11 +54,13 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
         } else {
           setIsOwner(false);
           setIsMember(true);
+          setMemberRole(data.role === 'editor' ? 'editor' : 'viewer');
           setOwnerEmail(data.owner_email || null);
           setMembers([]);
         }
       } else {
         setIsOwner(false); setIsMember(false);
+        setMemberRole('viewer');
         setWorkspaceId(null); setMembers([]); setOwnerEmail(null);
       }
     } catch (err: any) {
@@ -68,6 +71,18 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
   }, [userId]);
 
   useEffect(() => { if (visible) load(); }, [visible, load]);
+
+  // Keep the owner’s member list current and show a member’s new role promptly.
+  useEffect(() => {
+    if (!visible) return;
+    const channel = supabase
+      .channel(`family_members_${userId}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'workspace_members',
+      }, () => { load(); })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [visible, userId, load]);
 
   // ── Generate invite link and open share sheet ──────────────────────────────
   const handleShareInvite = async () => {
@@ -102,6 +117,7 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
         `• Link expires in 7 days`;
 
       await Share.share({ message: msg });
+      await load();
     } catch (err: any) {
       Alert.alert('Error', 'Could not generate invite link. Please try again.');
     } finally {
@@ -197,7 +213,10 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
 
         ) : isMember ? (
           /* ── Member view: joined someone else's workspace ── */
-          <ScrollView contentContainerStyle={styles.section}>
+          <ScrollView
+            contentContainerStyle={styles.section}
+            refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor="#10b981" />}
+          >
             <View style={styles.membershipCard}>
               <Text style={styles.membershipIcon}>👥</Text>
               <Text style={styles.membershipTitle}>YOU'RE SHARING</Text>
@@ -205,6 +224,12 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
               <Text style={styles.membershipSub}>
                 You have access to {ownerEmail ? `${ownerEmail}'s` : 'this'} inventory.
               </Text>
+              <View style={styles.accessLevel}>
+                <Text style={styles.accessLevelTitle}>YOUR ACCESS</Text>
+                <Text style={styles.accessLevelValue}>
+                  {memberRole === 'viewer' ? '👁 Viewer · Read only' : '✏️ Editor · Can scan and edit'}
+                </Text>
+              </View>
               <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave}>
                 <Text style={styles.leaveBtnText}>Leave Workspace</Text>
               </TouchableOpacity>
@@ -213,7 +238,10 @@ export const FamilySharingScreen: React.FC<FamilySharingScreenProps> = ({
 
         ) : (
           /* ── Owner view ── */
-          <ScrollView contentContainerStyle={styles.section}>
+          <ScrollView
+            contentContainerStyle={styles.section}
+            refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor="#10b981" />}
+          >
 
             {/* Invite card */}
             <View style={styles.inviteCard}>
@@ -333,6 +361,9 @@ const styles = StyleSheet.create({
   membershipTitle:       { fontSize: 11, fontWeight: '700', color: '#059669', letterSpacing: 1.5, marginBottom: 6 },
   membershipName:        { fontSize: 18, fontWeight: '900', color: '#0f172a', marginBottom: 10, textAlign: 'center' },
   membershipSub:         { fontSize: 13, color: '#64748b', textAlign: 'center', lineHeight: 20, marginBottom: 28 },
+  accessLevel:           { width: '100%', backgroundColor: '#fff', borderRadius: 12, padding: 14, marginTop: -12, marginBottom: 24, alignItems: 'center' },
+  accessLevelTitle:      { fontSize: 10, color: '#94a3b8', fontWeight: '800', letterSpacing: 1.2, marginBottom: 5 },
+  accessLevelValue:      { fontSize: 13, color: '#0f172a', fontWeight: '800', textAlign: 'center' },
   leaveBtn:              { borderWidth: 1.5, borderColor: '#fecaca', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12 },
   leaveBtnText:          { color: '#ef4444', fontWeight: '700', fontSize: 13 },
 

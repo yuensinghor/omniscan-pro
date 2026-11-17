@@ -40,6 +40,7 @@ Deno.serve(async (req: Request) => {
     .from('products')
     .select('name, category, image_url')
     .eq('barcode', shared.barcode)
+    .eq('owner_id', shared.owner_id)
     .single();
 
   const name     = product?.name     || shared.barcode;
@@ -70,17 +71,28 @@ Deno.serve(async (req: Request) => {
   });
 });
 
+function escapeHtml(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+}
+
 // ─── Page templates ───────────────────────────────────────────────────────────
 
 function sharePage({ name, category, imageUrl, description, barcode }: {
   name: string; category: string; imageUrl: string; description: string; barcode: string;
 }) {
-  const imgTag = imageUrl
-    ? `<img src="${imageUrl}" alt="${name}" class="product-img" />`
+  const safeName = escapeHtml(name);
+  const safeCategory = escapeHtml(category);
+  const safeDescription = escapeHtml(description);
+  const safeBarcode = escapeHtml(barcode);
+  const safeImageUrl = /^https:\/\/[^\s"'<>]+$/i.test(imageUrl) ? escapeHtml(imageUrl) : "";
+
+  const imgTag = safeImageUrl
+    ? `<img src="${safeImageUrl}" alt="${safeName}" class="product-img" />`
     : `<div class="product-img-placeholder">📦</div>`;
 
-  const descTag = description
-    ? `<p class="description">${description}</p>`
+  const descTag = safeDescription
+    ? `<p class="description">${safeDescription}</p>`
     : '';
 
   return `<!DOCTYPE html>
@@ -88,10 +100,10 @@ function sharePage({ name, category, imageUrl, description, barcode }: {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta property="og:title" content="${name}" />
-  <meta property="og:description" content="${description || 'Shared via OmniScan Pro'}" />
-  ${imageUrl ? `<meta property="og:image" content="${imageUrl}" />` : ''}
-  <title>${name} — OmniScan Pro</title>
+  <meta property="og:title" content="${safeName}" />
+  <meta property="og:description" content="${safeDescription || 'Shared via OmniScan Pro'}" />
+  ${safeImageUrl ? `<meta property="og:image" content="${safeImageUrl}" />` : ''}
+  <title>${safeName} — OmniScan Pro</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -212,10 +224,10 @@ function sharePage({ name, category, imageUrl, description, barcode }: {
   <div class="card">
     ${imgTag}
     <div class="card-body">
-      <div class="category">${category}</div>
-      <div class="name">${name}</div>
+      <div class="category">${safeCategory}</div>
+      <div class="name">${safeName}</div>
       ${descTag}
-      <div class="barcode">${barcode}</div>
+      <div class="barcode">${safeBarcode}</div>
     </div>
   </div>
 

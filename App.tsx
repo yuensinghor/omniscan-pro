@@ -21,6 +21,7 @@ import {
   View,
   StyleSheet,
   ActivityIndicator,
+  AppState,
   Alert,
   StatusBar,
   BackHandler,
@@ -79,8 +80,22 @@ export default function App() {
   // ─── Workspace / family sharing ───────────────────────────────────────────
   // workspaceOwnerId: if set, we load inventory for this owner (not our own)
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
-  const [workspaceRole, setWorkspaceRole]       = useState<'owner' | 'editor' | 'viewer' | null>(null);
+  const [workspaceRole, setWorkspaceRole]       = useState<'owner' | 'editor' | 'viewer'>('viewer');
   const fetchInventoryRef = useRef<(userId: string) => void>(() => {});
+  const pendingInviteTokenRef = useRef<string | null>(null);
+  const inventoryOwnerId = workspaceOwnerId || user?.id || '';
+  const previousInventoryOwnerRef = useRef(inventoryOwnerId);
+
+  useEffect(() => {
+    if (previousInventoryOwnerRef.current !== inventoryOwnerId) {
+      previousInventoryOwnerRef.current = inventoryOwnerId;
+      setSummary([]);
+      setEditingItem(null);
+      setIsLookupMode(false);
+      setPendingBarcode(null);
+      setScanMode(null);
+    }
+  }, [inventoryOwnerId]);
 
   const applyUser = useCallback((nextUser: AppUser) => {
     setUser(nextUser);
@@ -101,6 +116,7 @@ export default function App() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
       // Store token, user will be prompted after login
+      pendingInviteTokenRef.current = token;
       Alert.alert(
         'Invite Link',
         'Please sign in or create an account to join this shared inventory.',
@@ -118,12 +134,19 @@ export default function App() {
       // Joined successfully — reload inventory for new workspace owner
       Alert.alert('✅ Joined!', 'You now have access to the shared inventory.');
       setWorkspaceOwnerId(data.owner_id);
-      setWorkspaceRole(data.role);
+      setWorkspaceRole(data.role === 'editor' ? 'editor' : 'viewer');
       fetchInventoryRef.current(data.owner_id);
     } catch (err: any) {
       Alert.alert('Error', 'Could not process invite link. Please try again.');
     }
   }, []);
+
+  useEffect(() => {
+    if (!user || !pendingInviteTokenRef.current) return;
+    const token = pendingInviteTokenRef.current;
+    pendingInviteTokenRef.current = null;
+    handleInviteUrl(`https://barcodesscanner.com/invite/${token}`);
+  }, [user?.id, handleInviteUrl]);
 
   useEffect(() => {
     // App opened via deep link while closed
@@ -193,6 +216,7 @@ export default function App() {
       setDataLoading(false);
     }
   }, []);
+  useEffect(() => { fetchInventoryRef.current = fetchInventory; }, [fetchInventory]);
 
   // ─── Instant local update from realtime payload ─────────────────────────
   // Instead of re-fetching the whole inventory_summary view (slow, 4-6s),
@@ -240,43 +264,116 @@ export default function App() {
     }
   }, []);
 
-  // ─── Realtime subscription ────────────────────────────────────────────────
+  // ─── Resolve the signed-in user's workspace and inventory owner ────────────
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setWorkspaceOwnerId(null);
+      setWorkspaceRole('viewer');
+      setSummary([]);
+      return;
+    }
     const userId = user.id;
-    // Check if user is a member of someone else's workspace
-    supabase.rpc('get_my_workspace', { p_user_id: userId }).then(({ data }) => {
-      if (data?.member && data.owner_id !== userId) {
+    let active = true;
+    setWorkspaceOwnerId(null);
+    setWorkspaceRole('viewer');
+    setSummary([]);
+    setDataLoading(true);
+    supabase.rpc('get_my_workspace', { p_user_id: userId }).then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        setWorkspaceRole('viewer');
+        setDataLoading(false);
+        Alert.alert('Sharing unavailable', 'Could not verify your workspace access. Please try again.');
+      } else if (data?.member && data.owner_id !== userId) {
         setWorkspaceOwnerId(data.owner_id);
-        setWorkspaceRole(data.role);
-        fetchInventory(data.owner_id);
+        setWorkspaceRole(data.role === 'editor' ? 'editor' : 'viewer');
       } else {
         setWorkspaceOwnerId(null);
-        setWorkspaceRole(null);
-        fetchInventory(userId);
+        setWorkspaceRole('owner');
       }
     });
+    return () => { active = false; };
+  }, [user?.id]);
+
+  // Refresh membership when the app returns to the foreground so role changes
+  // and removals made by the owner take effect without requiring a reinstall.
+  useEffect(() => {
+    if (!user) return;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      supabase.rpc('get_my_workspace', { p_user_id: user.id }).then(({ data, error }) => {
+        if (error) return;
+        if (data?.member && data.owner_id !== user.id) {
+          setWorkspaceOwnerId(data.owner_id);
+          setWorkspaceRole(data.role === 'editor' ? 'editor' : 'viewer');
+        } else if (data?.member) {
+          setWorkspaceOwnerId(null);
+          setWorkspaceRole('owner');
+        } else {
+          if (workspaceOwnerId !== null) setSummary([]);
+          setWorkspaceOwnerId(null);
+          setWorkspaceRole('owner');
+        }
+      });
+    });
+    return () => subscription.remove();
+  }, [user?.id, workspaceOwnerId]);
+
+  // Apply role changes and membership removal immediately while the app is open.
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel(`workspace_role_${user.id}`)
+      .on('postgres_changes', {
+        // RLS limits received rows to this user’s membership or, for an owner,
+        // the members of their own workspace. No client filter is used because
+        // Realtime cannot reliably filter DELETE events by non-primary-key fields.
+        event: '*', schema: 'public', table: 'workspace_members',
+      }, () => {
+        supabase.rpc('get_my_workspace', { p_user_id: user.id }).then(({ data, error }) => {
+          if (error) return;
+          if (data?.member && data.owner_id !== user.id) {
+            setWorkspaceOwnerId(data.owner_id);
+            setWorkspaceRole(data.role === 'editor' ? 'editor' : 'viewer');
+          } else if (data?.member) {
+            setWorkspaceOwnerId(null);
+            setWorkspaceRole('owner');
+          } else {
+            setSummary([]);
+            setWorkspaceOwnerId(null);
+            setWorkspaceRole('owner');
+          }
+        });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id]);
+
+  // ─── Inventory fetch and realtime subscription for the resolved workspace ──
+  useEffect(() => {
+    if (!user || !inventoryOwnerId || workspaceRole === 'viewer' && workspaceOwnerId === null) return;
+    fetchInventory(inventoryOwnerId);
 
     const channel = supabase
       .channel('app_inventory_channel')
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'inventory_logs',
-        filter: `owner_id=eq.${userId}`,
+        filter: `owner_id=eq.${inventoryOwnerId}`,
       }, (payload) => {
         applyLogEvent(payload);
       })
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'products',
-        filter: `owner_id=eq.${userId}`,
+        filter: `owner_id=eq.${inventoryOwnerId}`,
       }, () => {
         // Product metadata changed (name/image/category) — need full sync
-        syncInventory(userId);
+        syncInventory(inventoryOwnerId);
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, fetchInventory, syncInventory, applyLogEvent]);
+  }, [user?.id, inventoryOwnerId, workspaceRole, fetchInventory, syncInventory, applyLogEvent]);
 
   // ─── Android hardware back button ─────────────────────────────────────────
   // Priority order (highest first): overlays close before screens pop
@@ -341,11 +438,15 @@ export default function App() {
   // Product metadata (name, category, image) lives in the products table.
   const handleScanResult = async (barcode: string) => {
     if (!user || !scanMode) return;
+    if (workspaceRole === 'viewer') {
+      Alert.alert('Read-only access', 'Ask the workspace owner to change your role if you need to edit inventory.');
+      return;
+    }
     const mode = scanMode;
     setScanMode(null); // close scanner immediately
     showInterstitialIfReady(); 
 
-    const existing = summary.find(i => i.barcode === barcode && i.owner_id === user.id);
+    const existing = summary.find(i => i.barcode === barcode && i.owner_id === inventoryOwnerId);
 
     if (mode === 'LOOKUP') {
       if (existing) {
@@ -380,7 +481,7 @@ export default function App() {
         barcode,
         action_type: mode,
         device_id:   'MOBILE_SCANNER',
-        owner_id:    user.id,
+        owner_id:    inventoryOwnerId,
         quantity:    mode === 'IN' ? 1 : -1,
       });
       if (error) throw error;
@@ -418,13 +519,14 @@ export default function App() {
         <DashboardScreen
           user={user}
           userType={adUserType}
+          ownerId={inventoryOwnerId}
           summary={summary}
           loading={dataLoading}
-          onRefresh={() => fetchInventory(user.id)}
+          onRefresh={() => fetchInventory(inventoryOwnerId)}
           workspaceRole={workspaceRole}
           onOpenProfile={() => setProfileOpen(true)}
           onOpenScanner={(mode) => setScanMode(mode)}
-          onEditItem={(item) => { setIsLookupMode(false); setEditingItem(item); }}
+          onEditItem={(item) => { setIsLookupMode(workspaceRole === 'viewer'); setEditingItem(item); }}
           onOpenHistory={() => setScreen('history')}
           registerBackHandler={(handler) => { dashboardBackHandlerRef.current = handler; }}
         />
@@ -432,7 +534,7 @@ export default function App() {
 
       {screen === 'history' && (
         <HistoryScreen
-          userId={user.id}
+          userId={inventoryOwnerId}
           onBack={() => setScreen('dashboard')}
         />
       )}
@@ -464,6 +566,7 @@ export default function App() {
           barcode={pendingBarcode.barcode}
           mode={pendingBarcode.mode}
           userId={user.id}
+          ownerId={inventoryOwnerId}
           visible={!!pendingBarcode}
           onSaved={() => setPendingBarcode(null)}
           onCancel={() => setPendingBarcode(null)}
@@ -475,13 +578,15 @@ export default function App() {
         <EditItemScreen
           item={editingItem}
           userId={user.id}
+          ownerId={inventoryOwnerId}
+          canShare={workspaceRole === 'owner'}
           visible={!!editingItem}
-          isLookup={isLookupMode}
+          isLookup={isLookupMode || workspaceRole === 'viewer'}
           onClose={() => { setEditingItem(null); setIsLookupMode(false); }}
           onSaved={() => {
             setEditingItem(null);
             setIsLookupMode(false);
-            fetchInventory(user.id);
+            fetchInventory(inventoryOwnerId);
           }}
         />
       )}
@@ -489,6 +594,7 @@ export default function App() {
       {/* Profile / settings */}
       <ProfileScreen
         user={user}
+        canManageDevices={workspaceRole === 'owner'}
         visible={profileOpen}
         onUserUpdated={applyUser}
         onClose={() => setProfileOpen(false)}
@@ -517,11 +623,11 @@ export default function App() {
           onWorkspaceChanged={(ownerId) => {
             if (ownerId && ownerId !== user.id) {
               setWorkspaceOwnerId(ownerId);
-              setWorkspaceRole('viewer'); // will be updated on next load
+              setWorkspaceRole('viewer');
               fetchInventory(ownerId);
             } else {
               setWorkspaceOwnerId(null);
-              setWorkspaceRole(null);
+              setWorkspaceRole('owner');
               fetchInventory(user.id);
             }
           }}

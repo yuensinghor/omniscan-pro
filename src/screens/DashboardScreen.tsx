@@ -41,6 +41,7 @@ import { AdBanner } from '../components/AdBanner';
 
 interface DashboardScreenProps {
   user: AppUser;
+  ownerId: string;
   userType?: string; // 'free' | 'pro' | 'scanner_owner' — undefined treated as free
   onOpenProfile: () => void;
   workspaceRole?: 'owner' | 'editor' | 'viewer' | null;
@@ -230,9 +231,9 @@ const InventoryCard: React.FC<{
 
     {/* Name + barcode — tap opens item detail */}
     <Pressable
-      onPress={isViewer ? undefined : onEdit}
+      onPress={onEdit}
       style={cardStyles.info}
-      android_ripple={isViewer ? undefined : { color: '#f1f5f9', borderless: true }}
+      android_ripple={{ color: '#f1f5f9', borderless: true }}
     >
       <Text style={cardStyles.name} numberOfLines={2}>{item.name || item.barcode}</Text>
       <Text style={cardStyles.barcode} numberOfLines={1}>{item.barcode}</Text>
@@ -301,7 +302,7 @@ const ScanBar: React.FC<{
 // ─── Dashboard Screen ─────────────────────────────────────────────────────────
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
-  user, userType, onOpenProfile, onOpenScanner, onEditItem, onOpenHistory, workspaceRole,
+  user, ownerId, userType, onOpenProfile, onOpenScanner, onEditItem, onOpenHistory, workspaceRole,
   summary, loading, onRefresh, registerBackHandler,
 }) => {
   const [searchQuery, setSearchQuery]       = useState('');
@@ -380,7 +381,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       const next = { ...prev };
       let changed = false;
       for (const barcode of Object.keys(next)) {
-        const serverItem = summary.find(i => i.barcode === barcode && i.owner_id === user.id);
+        const serverItem = summary.find(i => i.barcode === barcode && i.owner_id === ownerId);
         if (serverItem && serverItem.quantity === next[barcode]) {
           delete next[barcode];
           changed = true;
@@ -388,10 +389,17 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       }
       return changed ? next : prev;
     });
-  }, [summary, user.id]);
+  }, [summary, ownerId]);
+
+  // Do not carry optimistic counts across personal/shared inventory switches.
+  useEffect(() => {
+    setQtyOverrides({});
+    setUndoAction(null);
+    setToastVisible(false);
+  }, [ownerId]);
 
   const adjustQuantity = useCallback(async (barcode: string, delta: number) => {
-    const item = summary.find(i => i.barcode === barcode && i.owner_id === user.id);
+    const item = summary.find(i => i.barcode === barcode && i.owner_id === ownerId);
     if (!item) return;
 
     const currentQty = qtyOverrides[barcode] ?? item.quantity;
@@ -412,7 +420,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         barcode,
         action_type: delta > 0 ? 'IN' : 'OUT',
         device_id:   'MOBILE_DASHBOARD',
-        owner_id:    user.id,
+        owner_id:    ownerId,
         quantity:    delta,
       }).select('log_id').single();
       if (error) throw error;
@@ -428,7 +436,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       });
       Alert.alert('Error', t.errorUpdateQty);
     }
-  }, [summary, user.id, qtyOverrides]);
+  }, [summary, ownerId, qtyOverrides]);
 
   const hideToast = useCallback(() => {
     Animated.timing(toastAnim, {
@@ -465,7 +473,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         barcode:     undoAction.barcode,
         action_type: undoAction.delta > 0 ? 'OUT' : 'IN',
         device_id:   'MOBILE_UNDO',
-        owner_id:    user!.id,
+        owner_id:    ownerId,
         quantity:    -undoAction.delta,
       });
     } catch (err: any) {
@@ -477,7 +485,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       Alert.alert('Undo Failed', t.errorUndo);
     }
     hideToast();
-  }, [undoAction, hideToast, user, summary, qtyOverrides]);
+  }, [undoAction, hideToast, user, summary, qtyOverrides, ownerId]);
 
   const handleShare = async (item: InventorySummary) => {
     try {
@@ -486,7 +494,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         .from('shared_items')
         .select('token')
         .eq('barcode', item.barcode)
-        .eq('owner_id', user.id)
+        .eq('owner_id', ownerId)
         .single();
 
       let token = existing?.token;
@@ -494,7 +502,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       if (!token) {
         const { data: created, error } = await supabase
           .from('shared_items')
-          .insert({ barcode: item.barcode, owner_id: user.id })
+          .insert({ barcode: item.barcode, owner_id: ownerId })
           .select('token')
           .single();
         if (error) throw error;
@@ -513,7 +521,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   // All items (including zero qty) — used for category filtering
   const allItems = useMemo(() => {
-    const base = summary.filter(i => i.owner_id === user.id);
+    const base = summary.filter(i => i.owner_id === ownerId);
     return [...base].sort((a, b) => {
       const ai = recentOrder.indexOf(a.barcode);
       const bi = recentOrder.indexOf(b.barcode);
@@ -522,7 +530,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       if (bi !== -1) return 1;
       return 0;
     });
-  }, [summary, user.id, recentOrder]);
+  }, [summary, ownerId, recentOrder]);
 
   // Active items (qty > 0) — used for "All" category and unit counts
   const activeItems = useMemo(() => {
@@ -744,7 +752,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     if (!numpadItem) return;
     // Read fresh state directly — don't rely on captured closure values
     const barcode = numpadItem.barcode;
-    const serverItem = summary.find(i => i.barcode === barcode && i.owner_id === user.id);
+    const serverItem = summary.find(i => i.barcode === barcode && i.owner_id === ownerId);
     if (!serverItem) return;
     const current = qtyOverrides[barcode] ?? serverItem.quantity;
     const delta = qty - current;

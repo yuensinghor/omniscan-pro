@@ -15,6 +15,8 @@ import { t } from '../i18n';
 interface EditItemScreenProps {
   item: InventorySummary;
   userId: string;
+  ownerId: string;
+  canShare: boolean;
   visible: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -49,7 +51,7 @@ async function uploadPhoto(localUri: string, barcode: string, userId: string): P
 }
 
 export const EditItemScreen: React.FC<EditItemScreenProps> = ({
-  item, userId, visible, onClose, onSaved, isLookup = false,
+  item, userId, ownerId, canShare, visible, onClose, onSaved, isLookup = false,
 }) => {
   const [name, setName]               = useState(item.name || '');
   const [category, setCategory]       = useState(item.category || '');
@@ -114,7 +116,7 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
         .from('shared_items')
         .select('token')
         .eq('barcode', item.barcode)
-        .eq('owner_id', userId)
+        .eq('owner_id', ownerId)
         .single();
 
       let token = existing?.token;
@@ -122,7 +124,7 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
       if (!token) {
         const { data: created, error } = await supabase
           .from('shared_items')
-          .insert({ barcode: item.barcode, owner_id: userId })
+          .insert({ barcode: item.barcode, owner_id: ownerId })
           .select('token')
           .single();
         if (error) throw error;
@@ -163,7 +165,7 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
 
       const { error } = await supabase.from('products').upsert({
         barcode:   item.barcode,
-        owner_id:  userId,
+        owner_id:  ownerId,
         name:      name.trim(),
         category:  category.trim() || 'General',
         image_url: finalImageUrl || null,
@@ -199,7 +201,7 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
                 .from('inventory_logs')
                 .delete()
                 .eq('barcode', item.barcode)
-                .eq('owner_id', userId);
+                .eq('owner_id', ownerId);
               if (logDeleteError) throw logDeleteError;
 
               // Step 2: Delete the product record itself
@@ -207,7 +209,7 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
                 .from('products')
                 .delete()
                 .eq('barcode', item.barcode)
-                .eq('owner_id', userId);
+                .eq('owner_id', ownerId);
               if (prodError) throw prodError;
 
               onSaved();
@@ -298,9 +300,11 @@ export const EditItemScreen: React.FC<EditItemScreenProps> = ({
                 </View>
               </View>
 
-              <TouchableOpacity style={styles.shareBtn} onPress={handleShare}>
-                <Text style={styles.shareBtnText}>↗  Share this product</Text>
-              </TouchableOpacity>
+              {canShare && (
+                <TouchableOpacity style={styles.shareBtn} onPress={handleShare}>
+                  <Text style={styles.shareBtnText}>↗  Share this product</Text>
+                </TouchableOpacity>
+              )}
 
               {!isLookup && (
                 <View style={styles.actions}>

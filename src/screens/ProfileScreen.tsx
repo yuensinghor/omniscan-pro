@@ -29,6 +29,7 @@ interface ProfileScreenProps {
   visible: boolean;
   onClose: () => void;
   onAddDevice: () => void;
+  canManageDevices: boolean;
   onOpenHistory: () => void;
   onOpenFamilySharing: () => void;
   onUserUpdated?: (user: AppUser) => void;
@@ -163,6 +164,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   visible,
   onClose,
   onAddDevice,
+  canManageDevices,
   onOpenHistory,
   onOpenFamilySharing,
   onUserUpdated,
@@ -398,13 +400,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
                 {/* Quick actions */}
                 <View style={styles.actionGrid}>
-                  <TouchableOpacity
-                    style={styles.actionCard}
-                    onPress={onAddDevice}
-                  >
-                    <Text style={styles.actionCardIcon}>📡</Text>
-                    <Text style={styles.actionCardLabel}>Add Scanner</Text>
-                  </TouchableOpacity>
+                  {canManageDevices && (
+                    <TouchableOpacity
+                      style={styles.actionCard}
+                      onPress={onAddDevice}
+                    >
+                      <Text style={styles.actionCardIcon}>📡</Text>
+                      <Text style={styles.actionCardLabel}>Add Scanner</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
                     style={styles.actionCard}
                     onPress={() => { onClose(); onOpenHistory(); }}

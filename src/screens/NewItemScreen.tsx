@@ -25,6 +25,7 @@ interface NewItemScreenProps {
   barcode: string;
   mode: ScanMode;
   userId: string;
+  ownerId: string;
   visible: boolean;
   onSaved: () => void;
   onCancel: () => void;
@@ -34,6 +35,7 @@ export const NewItemScreen: React.FC<NewItemScreenProps> = ({
   barcode,
   mode,
   userId,
+  ownerId,
   visible,
   onSaved,
   onCancel,
@@ -140,7 +142,7 @@ export const NewItemScreen: React.FC<NewItemScreenProps> = ({
         .from('products')
         .upsert({
           barcode:   barcode,
-          owner_id:  userId,
+          owner_id:  ownerId,
           name:      name.trim(),
           category:  category.trim() || 'General',
           image_url: imageUrl || null,
@@ -157,7 +159,7 @@ export const NewItemScreen: React.FC<NewItemScreenProps> = ({
           barcode,
           action_type: mode === 'LOOKUP' ? 'IN' : mode,
           device_id:   'MOBILE_SCANNER',
-          owner_id:    userId,
+          owner_id:    ownerId,
           quantity:    1,
         });
 
